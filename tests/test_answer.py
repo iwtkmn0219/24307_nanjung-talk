@@ -573,3 +573,24 @@ def test_governor_note_is_absent_when_the_day_was_not_the_one_asked_about(fake_c
     # 날짜·오늘로 찾은 일기가 아니라 검색 결과일 뿐이면 붙이지 않는다(일기 안 질문이 막히는 부작용 방지)
     answer("배 멀미 하셨어요?", [hit(0.5, original="初六日己巳。風雨大作。興陽，順天入來。")], [], "normal", client=fake_client)
     assert "수령" not in system_of(fake_client)
+
+
+@pytest.mark.parametrize("original", ["二十八日。晴。順天來。", "初四日。長興，興陽來。", "初六日己巳。風雨大作。興陽，順天入來。",
+                                      "十日。晴。順天亦入來。", "十一日。光陽來見。"])
+def test_governor_note_is_added_for_confirmed_place_names_as_subject_of_coming(fake_client, original):
+    h = hit(0.5, original=original)
+    answer("오늘 뭐 하셨어요?", [h], [], "normal", client=fake_client, focus_ids=[h.entry.id])
+    assert "수령" in system_of(fake_client)
+
+
+@pytest.mark.parametrize("original", ["十八日。晴。探船入來。", "十八日。晴。元均入來。", "十八日。營探船入來。", "十八日。右水使入來。",
+                                      "十八日。豚薈入來。", "十八日。主倅入來。"])
+def test_governor_note_is_absent_for_scout_boats_people_and_offices(fake_client, original):
+    h = hit(0.5, original=original)
+    answer("오늘 뭐 하셨어요?", [h], [], "normal", client=fake_client, focus_ids=[h.entry.id])
+    assert "수령" not in system_of(fake_client)
+
+
+def test_governor_note_wording_does_not_assert_when_unsure():
+    from nanjung.answer import GOVERNOR_NOTE
+    assert "단정하지" in GOVERNOR_NOTE and "지어내지" in GOVERNOR_NOTE
