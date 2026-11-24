@@ -104,3 +104,8 @@ def stats(conn) -> dict:
     pig = [r[0] for r in conn.run(
         "SELECT id FROM diary WHERE original LIKE '%豚%' AND translation LIKE '%돼지%' ORDER BY id")]
     return {"count": count, "emotions": emotions, "pig_in_son_entries": pig}
+
+
+def set_emotion(conn, entry_id: str, emotion: str) -> None:
+    """감정만 바꾼다(번역이 그대로라 임베딩은 다시 만들지 않는다)."""
+    conn.run("UPDATE diary SET emotion = :emotion WHERE id = :id", id=entry_id, emotion=emotion)

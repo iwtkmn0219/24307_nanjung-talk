@@ -204,3 +204,47 @@ def test_system_prompt_forbids_generalizing_and_keeps_hao_endings(fake_client):
     s = system_of(fake_client)
     assert "일부" in s and "일반화" in s          # 몇 날의 일기로 '매일·자주·한 번도'를 단정하지 않는다
     assert "습니다" in s and "나이다" in s          # 쓰지 말 어미를 구체적으로 못박는다
+
+
+# ---- 답변 단계의 일기 밖 판별 ----
+NO_BASIS = "처음 듣는 말이라 내 답할 길이 없소."
+
+
+def test_model_says_no_basis_becomes_out_of_scope():
+    top = hit(0.5)
+    c = FakeClient(reply=NO_BASIS)
+    r = answer("아이유 노래 들어보셨어요?", [top, hit(0.4)], [], "normal", client=c)
+    assert c.calls == 1
+    assert r["mode"] == "out_of_scope" and r["sources"] == []
+    assert r["answer"] == "처음 듣는 말이라 내 답할 길이 없소. 대신 내 일기 이야기를 들려주리다."
+    assert r["suggestions"] == top.entry.questions
+
+
+def test_no_basis_is_detected_by_prefix_and_surrounding_noise():
+    for reply in [NO_BASIS + " 다른 말을 덧붙였소.", "  " + NO_BASIS, '"' + NO_BASIS + '"']:
+        r = answer("x", [hit(0.5)], [], "normal", client=FakeClient(reply=reply))
+        assert r["mode"] == "out_of_scope" and r["sources"] == [], reply
+
+
+def test_serious_mode_is_also_filtered():
+    r = answer("x", [hit(0.5, "비통")], [], "serious", client=FakeClient(reply=NO_BASIS))
+    assert r["mode"] == "out_of_scope"
+
+
+def test_date_matched_question_is_never_converted():
+    h = hit(0.1)
+    r = answer("정유년 9월 16일", [h], [], "normal", client=FakeClient(reply=NO_BASIS), focus_ids=[h.entry.id])
+    assert r["mode"] == "normal" and r["answer"] == NO_BASIS and len(r["sources"]) == 1
+
+
+def test_normal_answer_that_merely_mentions_the_phrase_later_is_kept():
+    reply = "그날은 맑았소. " + NO_BASIS
+    r = answer("x", [hit(0.5)], [], "normal", client=FakeClient(reply=reply))
+    assert r["mode"] == "normal" and len(r["sources"]) == 1
+
+
+def test_system_prompt_tells_model_to_refuse_exactly():
+    c = FakeClient()
+    answer("x", [hit(0.5)], [], "normal", client=c)
+    s = system_of(c)
+    assert NO_BASIS in s and "무관" in s and "다른 말" in s

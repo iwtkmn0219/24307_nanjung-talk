@@ -113,3 +113,11 @@ def test_stats_queries():
     out = db.stats(c)
     assert out == {"count": 1593, "emotions": {"일상": 1000, "비통": 50}, "pig_in_son_entries": ["1597-10-14"]}
     assert "豚" in c.calls[2][0] and "돼지" in c.calls[2][0]
+
+
+def test_set_emotion_updates_only_emotion():
+    c = FakeConn()
+    db.set_emotion(c, "1597-04-13", "일상")
+    sql, params = c.calls[0]
+    assert sql.startswith("UPDATE diary SET emotion") and "WHERE id" in sql and "embedding" not in sql
+    assert params == {"id": "1597-04-13", "emotion": "일상"}

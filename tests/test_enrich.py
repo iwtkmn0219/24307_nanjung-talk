@@ -6,6 +6,7 @@ from botocore.exceptions import ClientError, ReadTimeoutError
 
 from nanjung import bedrock
 from nanjung.bedrock import BedrockUnavailable
+from nanjung import enrich as enrich_mod
 from nanjung.enrich import EnrichError, build_prompt, enrich, parse_response
 from nanjung.models import EMOTIONS, DiaryEntry
 
@@ -174,3 +175,41 @@ def test_intro_up_to_80_is_accepted():
 def test_prompt_glossary_son():
     system, _ = build_prompt(entry())
     assert "豚" in system and "아들" in system  # 豚薈 → 아들 회 (돼지로 옮기지 않게)
+
+
+# ---- 감정 기준 좁히기 / 䓲 통일 / 감정만 재분류 ----
+def test_system_prompt_narrows_grief_to_death_and_loss():
+    system, _ = build_prompt(entry())
+    assert "죽음" in system and "상실" in system and "통곡" in system and "애도" in system
+    assert "병고" in system and "근심" in system   # 병고·근심은 비통이 아니라는 지시
+
+
+def test_system_prompt_unifies_yeol_name():
+    system, _ = build_prompt(entry())
+    assert "䓲" in system and "아들 열" in system and "豚䓲" in system
+
+
+def test_emotion_prompt_has_rules_and_text():
+    system, messages = enrich_mod.build_emotion_prompt("十三日。哭。", "13일. 통곡했다.")
+    assert "비통" in system and "병고" in system and "JSON" in system
+    text = messages[0]["content"][0]["text"]
+    assert "十三日。哭。" in text and "13일. 통곡했다." in text
+
+
+def test_parse_emotion_variants():
+    assert enrich_mod.parse_emotion('{"emotion":"비통"}') == "비통"
+    assert enrich_mod.parse_emotion('```json\n{"emotion":"일상"}\n```') == "일상"
+    for bad in ["not json", '{"emotion":"기쁨"}', "[]", '{"x":1}']:
+        with pytest.raises(EnrichError):
+            enrich_mod.parse_emotion(bad)
+
+
+def test_reclassify_returns_emotion_and_retries_once():
+    c = FakeConverseClient(['{"emotion":"일상"}'])
+    assert enrich_mod.reclassify("o", "t", client=c) == "일상"
+    assert c.kwargs[0]["inferenceConfig"]["maxTokens"] <= 200
+    c2 = FakeConverseClient(["broken", '{"emotion":"비통"}'])
+    assert enrich_mod.reclassify("o", "t", client=c2) == "비통" and c2.calls == 2
+    c3 = FakeConverseClient(["broken", "broken"])
+    with pytest.raises(EnrichError):
+        enrich_mod.reclassify("o", "t", client=c3)

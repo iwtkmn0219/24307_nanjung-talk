@@ -218,3 +218,41 @@ def test_eval_action_scores_questions_and_returns_sweep(fakes, monkeypatch):
     assert out["best"] == {"threshold": 0.11, "accuracy": 1.0, "in_missed": 0, "out_leaked": 0}
     assert len(out["table"]) == 31 and out["separation"]["overlap"] is False
     assert out["in_dist"]["n"] == 25 and out["out_dist"]["n"] == 15 and out["out_dist"]["max"] == 0.1
+
+
+def _grief_file():
+    return json.dumps([
+        {"id": "a", "original": "o1", "translation": "t1", "emotion": "비통", "intro": "i", "questions": ["1", "2", "3"]},
+        {"id": "b", "original": "o2", "translation": "t2", "emotion": "비통", "intro": "i", "questions": ["1", "2", "3"]},
+        {"id": "c", "original": "o3", "translation": "t3", "emotion": "일상", "intro": "i", "questions": ["1", "2", "3"]},
+    ], ensure_ascii=False)
+
+
+def test_reclassify_updates_json_and_db_only_for_changed_grief_entries(fakes, monkeypatch):
+    s3, br, fdb, _ = fakes({"processed/X.json": _grief_file()})
+    asked, set_calls = [], []
+    monkeypatch.setattr(ingest, "reclassify", lambda o, t, client=None: asked.append(o) or ("일상" if o == "o1" else "비통"))
+    fdb.set_emotion = lambda conn, i, e: set_calls.append((i, e))
+    out = ingest.lambda_handler({"action": "reclassify", "key": "processed/X.json"}, None)
+    assert asked == ["o1", "o2"]                       # 비통이 아닌 항목은 묻지 않는다
+    assert out == {"checked": 2, "changed": [{"id": "a", "from": "비통", "to": "일상"}]}
+    assert set_calls == [("a", "일상")] and br.embed_calls == 0 and br.converse_calls == 0
+    saved = json.loads(s3.objects["processed/X.json"])
+    assert [d["emotion"] for d in saved] == ["일상", "비통", "일상"]
+    assert [d["translation"] for d in saved] == ["t1", "t2", "t3"]   # 번역은 그대로
+
+
+def test_reclassify_without_changes_writes_nothing(fakes, monkeypatch):
+    s3, _, fdb, _ = fakes({"processed/X.json": _grief_file()})
+    monkeypatch.setattr(ingest, "reclassify", lambda o, t, client=None: "비통")
+    fdb.set_emotion = lambda *a: (_ for _ in ()).throw(AssertionError("호출되면 안 됨"))
+    out = ingest.lambda_handler({"action": "reclassify", "key": "processed/X.json"}, None)
+    assert out == {"checked": 2, "changed": []} and s3.puts == []
+
+
+def test_reclassify_rejects_bad_key_and_missing_file(fakes):
+    fakes({})
+    with pytest.raises(ValueError):
+        ingest.lambda_handler({"action": "reclassify", "key": "raw/X.html"}, None)
+    with pytest.raises(ValueError):
+        ingest.lambda_handler({"action": "reclassify", "key": "processed/none.json"}, None)

@@ -10,7 +10,7 @@ from botocore.exceptions import ClientError
 from .. import db
 from ..bedrock import embed
 from ..dates import assign_dates
-from ..enrich import enrich
+from ..enrich import enrich, reclassify
 from ..models import MonthRef
 from ..parse import parse_month_page
 from ..today import build_today_map
@@ -124,6 +124,34 @@ def _eval() -> dict:
             "out_dist": ev.distribution([r["sim"] for r in rows if r["expect"] == "out"])}
 
 
+def _reclassify(key: str) -> dict:
+    """processed JSON의 '비통' 항목만 감정을 다시 분류해 JSON과 DB에 반영한다(번역·임베딩은 그대로)."""
+    if not (key.startswith("processed/") and key.endswith(".json")):
+        raise ValueError(f"processed/<data_id>.json 형식이 아님: {key!r}")
+    s3 = s3_client()
+    raw = _read(s3, key)
+    if raw is None:
+        raise ValueError(f"S3에 없음: {key}")
+    data = json.loads(raw)
+    changed, checked = [], 0
+    conn = None
+    for d in data:
+        if d.get("emotion") != "비통":
+            continue
+        checked += 1
+        new = reclassify(d["original"], d["translation"])
+        if new != d["emotion"]:
+            conn = conn or get_conn()
+            db.set_emotion(conn, d["id"], new)  # DB를 먼저: JSON 저장이 실패해도 다시 실행하면 같은 결과로 맞춰진다
+            changed.append({"id": d["id"], "from": d["emotion"], "to": new})
+            d["emotion"] = new
+    if changed:
+        s3.put_object(Bucket=os.environ["DATA_BUCKET"], Key=key,
+                      Body=json.dumps(data, ensure_ascii=False, indent=1).encode("utf-8"),
+                      ContentType="application/json")
+    return {"checked": checked, "changed": changed}
+
+
 def lambda_handler(event, context):
     action = event.get("action")
     if action == "init_schema":
@@ -139,4 +167,6 @@ def lambda_handler(event, context):
         return _diag(event["message"])
     if action == "eval":
         return _eval()
+    if action == "reclassify":
+        return _reclassify(event["key"])
     raise ValueError(f"알 수 없는 action: {action!r}")
