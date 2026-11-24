@@ -11,7 +11,7 @@ from .models import EMOTIONS, DiaryEntry
 MAX_TOKENS = 4096  # 플랜은 1500이나 가장 긴 날(609자)이 잘림(실측)
 TEMPERATURE = 0.2
 INTRO_MAX = 40       # 프롬프트 요구
-INTRO_HARD_MAX = 60  # 검증 상한(약간 넘긴 소개로 적재가 실패하지 않게)
+INTRO_HARD_MAX = 80  # 검증 상한(넘긴 소개로 적재가 실패하지 않게. 61자 이상이 2회 연속 나온 실측 있음)
 
 SYSTEM = f"""당신은 『난중일기』(이충무공전서본) 한문 원문을 현대 한국어로 옮기는 번역가다.
 주어진 하루치 원문을 읽고 아래 키를 가진 JSON 객체 하나만 출력하라. 설명이나 다른 글은 쓰지 마라.
