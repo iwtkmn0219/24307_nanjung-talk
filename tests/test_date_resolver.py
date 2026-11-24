@@ -183,3 +183,83 @@ def test_followup_without_any_event_still_uses_previous_diary():
 
 def test_explicit_date_still_beats_conflict_and_negation_with_relative_day():
     assert r("유배 말고 정유년 9월 16일 전날은요?", ["1592-06-10"]) == ["1597-09-15"]
+
+
+# ---- 명량 키워드 확장: 울돌목·鳴梁 단독, 12·13척은 싸움 동사와 함께 ----
+@pytest.mark.parametrize("msg", ["울돌목에서 무슨 일이 있었어요?", "鳴梁 이야기를 해 주세요", "울돌목 해전은 어땠소?"])
+def test_ulddolmok_and_myeongnyang_hanja_map_alone(msg):
+    assert r(msg) == ["1597-09-16"]
+
+
+@pytest.mark.parametrize("msg", [
+    "12척의 배로 이긴 것이 사실?", "13척으로 싸우셨나요?",
+    "열두 척으로 승리하셨죠?", "열세 척의 배로 물리치셨다던데요", "12척으로 대첩을 거두셨어요?", "열두척으로 이긴 게 맞아요?",
+    "12 척으로 전투를 치르셨죠?",
+])
+def test_twelve_or_thirteen_ships_with_a_fighting_verb_map(msg):
+    assert r(msg) == ["1597-09-16"]
+
+
+@pytest.mark.parametrize("msg", [
+    "배 12척을 만들었나요?", "열두 척이 있었나요?", "13척의 배는 어디에 있었어요?", "112척으로 이기셨어요?", "열두 척 정도 보셨어요?",
+])
+def test_ship_counts_without_a_fighting_verb_do_not_map(msg):
+    assert r(msg) is None
+
+
+def test_new_myeongnyang_words_work_with_relative_day_and_explicit_date():
+    nb2 = {("1597-09-16", -1): "1597-09-15"}.get
+    assert resolve("울돌목 전날은요?", [], lambda i, d: nb2((i, d))) == ["1597-09-15"]
+    assert r("12척으로 이긴 날 말고 정유년 9월 1일은요?") == ["1597-09-01"]
+
+
+# ---- '오늘' 질문 → 오늘의 일기 ----
+@pytest.mark.parametrize("msg", [
+    "오늘의 장군님은 어떠셨습니까", "오늘의 일기 보여 주세요", "오늘 일기 알려줘요", "오늘은 어떠셨어요?", "오늘 장군님은 뭐 하세요?",
+    "오늘의 장군은요?", "430년 전 오늘 무슨 일이 있었어요?", "400년 전 오늘은요?",
+])
+def test_today_expressions_are_detected(msg):
+    from nanjung.date_resolver import is_today_question
+    assert is_today_question(msg) is True
+
+
+@pytest.mark.parametrize("msg", ["오늘 점심 메뉴 추천해 주세요", "오늘 날씨 어때요?", "오늘날의 정치", "배 멀미 하셨어요?", "일기는 매일 쓰셨어요?",
+                                 "오늘 뭐 먹을까요?"])
+def test_plain_today_word_alone_is_not_enough(msg):
+    from nanjung.date_resolver import is_today_question
+    assert is_today_question(msg) is False
+
+
+# ---- 리뷰 반영: '싸게'·'물리적' 같은 말이 전투 동사로 오인되지 않게 ----
+@pytest.mark.parametrize("msg", ["배 12척이 싸게 팔렸나요?", "배 13척의 물리적 한계는 무엇이오?", "열두 척은 값이 싼가요?",
+                                 "12척을 물리적으로 옮길 수 있나요?", "배 13척이 싸다던데 사실이오?"])
+def test_ship_counts_with_price_or_physics_words_do_not_map(msg):
+    assert r(msg) is None
+
+
+@pytest.mark.parametrize("msg", ["12척으로 싸우셨나요?", "13척이 싸웠다는 게 사실이오?", "열두 척으로 싸운 이야기 해 주세요",
+                                 "12척으로 물리치셨죠?", "13척으로 물리쳤다고 들었어요", "12척의 배로 이기셨나요?", "열세 척으로 이겨서 대첩을 거뒀죠?",
+                                 "12척 전투 이야기"])
+def test_ship_counts_with_real_fighting_verbs_still_map(msg):
+    assert r(msg) == ["1597-09-16"]
+
+
+# ---- 리뷰 반영: '오늘은 어떠' 오탐, 날짜·사건 언급 여부 ----
+@pytest.mark.parametrize("msg", ["오늘은 어떠셨어요?", "오늘은 어떠십니까?", "오늘 어떠세요?", "오늘은 어떠셨습니까"])
+def test_honorific_forms_of_how_are_you_today_are_detected(msg):
+    from nanjung.date_resolver import is_today_question
+    assert is_today_question(msg) is True
+
+
+@pytest.mark.parametrize("msg", ["오늘은 어떠한 점심을 먹을까요?", "오늘 어떠한 옷을 입을까요?", "오늘은 어떤 노래가 좋아요?"])
+def test_plain_how_about_today_questions_are_not_detected(msg):
+    from nanjung.date_resolver import is_today_question
+    assert is_today_question(msg) is False
+
+
+def test_mentions_date_or_event_and_relative_direction_helpers():
+    from nanjung.date_resolver import mentions_date_or_event, relative_direction
+    assert mentions_date_or_event("명량 오늘의 일기") and mentions_date_or_event("정유년 9월 16일 오늘")
+    assert not mentions_date_or_event("오늘의 일기") and not mentions_date_or_event("배 멀미 하셨어요?")
+    assert relative_direction("오늘의 일기 다음 날은요?") == 1 and relative_direction("전날은요?") == -1
+    assert relative_direction("오늘의 일기") == 0

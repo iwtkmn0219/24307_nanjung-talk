@@ -1,6 +1,6 @@
 import base64
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 import pytest
 
@@ -268,7 +268,7 @@ def test_modern_question_survives_bedrock_outage(env, monkeypatch):
     monkeypatch.setattr(chat, "answer", real.answer)
     status, out = call(ev(body("요즘 일본이랑 사이 어때요?")))
     assert status == 200 and out["mode"] == "modern"
-    assert out["answer"].startswith("후대의 일은 모르오.") and out["suggestions"] == []
+    assert out["answer"].startswith("후대의 일은 모르오.") and len(out["suggestions"]) == 3
 
 
 def test_modern_question_survives_db_outage(env, monkeypatch):
@@ -280,15 +280,20 @@ def test_modern_question_survives_db_outage(env, monkeypatch):
         raise OSError("db down")
     monkeypatch.setattr(chat, "get_conn", boom)
     status, out = call(ev(body("요즘 일본이랑 사이 어때요?")))
-    assert status == 200 and out["mode"] == "modern" and out["suggestions"] == []
+    assert status == 200 and out["mode"] == "modern" and len(out["suggestions"]) == 3
 
 
-def test_modern_question_uses_search_for_suggestions_when_healthy(env, monkeypatch):
+def test_modern_question_needs_no_search_or_embedding_and_returns_fixed_chips(env, monkeypatch):
     import nanjung.answer as real
-    fdb, _ = env(FakeDB({None: [Hit(entry(), 0.9)]}))
+    fdb, rec = env(FakeDB({None: [Hit(entry(), 0.9)]}))
     monkeypatch.setattr(chat, "answer", real.answer)
+    calls = {"embed": 0, "conn": 0}
+    monkeypatch.setattr(chat, "embed", lambda *a, **k: calls.__setitem__("embed", calls["embed"] + 1) or [0.0] * 1024)
+    monkeypatch.setattr(chat, "get_conn", lambda: calls.__setitem__("conn", calls["conn"] + 1) or object())
     _, out = call(ev(body("요즘 일본이랑 사이 어때요?")))
-    assert out["suggestions"] == ["q1", "q2", "q3"] and fdb.search_calls == [(5, None)]
+    assert out["mode"] == "modern" and out["sources"] == [] and fdb.search_calls == []
+    assert calls == {"embed": 0, "conn": 0}                        # 고정 chip이라 임베딩도 DB도 필요 없다
+    assert set(out["suggestions"]) <= set(real.FIXED_SUGGESTIONS) and len(out["suggestions"]) == 3
 
 
 class Ctx:
@@ -438,3 +443,172 @@ def test_time_budget_after_quota_is_logged_as_budget(env, caplog, monkeypatch):
         assert call(ev(body()))[0] == 503
     text = " ".join(rec.getMessage() for rec in caplog.records)
     assert "시간 예산" in text and "Bedrock 일시 장애" not in text
+
+
+# ---- '오늘' 질문은 화면의 오늘의 일기와 같은 일기를 근거로 ----
+def _today_env(env, monkeypatch, items, now=None, results=None):
+    fdb, rec = env(FakeDB(results or {}))
+    monkeypatch.setattr(chat, "today_table", lambda: FakeTodayTable(items))
+    monkeypatch.setattr(chat, "now_kst", lambda: now or datetime(2026, 12, 1, 0, 30, tzinfo=KST))
+    return fdb, rec
+
+
+def test_today_question_searches_todays_diary_and_marks_it_as_the_day_asked(env, monkeypatch):
+    items = {"12-01": {"md": "12-01", "ids": ["x-a", "x-b"], "exact": True}}
+    fdb, rec = _today_env(env, monkeypatch, items, results={("x-a",): [Hit(entry("x-a"), 0.1)]})
+    status, out = call(ev(body("오늘의 장군님은 어떠셨습니까")))
+    assert status == 200 and fdb.search_calls == [(5, ["x-a"])]       # 2026 % 2 == 0 → 첫 번째 (/diary와 같은 규칙)
+    assert rec.focus == [["x-a"]] and out["mode"] == "normal"
+
+
+def test_today_uses_kst_month_day_and_year_rotation(env, monkeypatch):
+    items = {"01-01": {"md": "01-01", "ids": ["x-a", "x-b"], "exact": True}}
+    # UTC 2026-12-31 15:30 = KST 2027-01-01 00:30 → md 01-01, 연도 2027 → 두 번째
+    now = datetime(2026, 12, 31, 15, 30, tzinfo=timezone.utc).astimezone(KST)
+    fdb, _ = _today_env(env, monkeypatch, items, now=now, results={("x-b",): [Hit(entry("x-b"), 0.1)]})
+    call(ev(body("오늘의 일기 보여 주세요")))
+    assert fdb.search_calls == [(5, ["x-b"])]
+
+
+def test_plain_today_word_does_not_trigger_the_lookup(env, monkeypatch):
+    fdb, rec = _today_env(env, monkeypatch, {"12-01": {"md": "12-01", "ids": ["x-a"], "exact": True}})
+    monkeypatch.setattr(chat, "today_table", lambda: (_ for _ in ()).throw(AssertionError("조회하면 안 됨")))
+    call(ev(body("오늘 점심 메뉴 추천해 주세요")))
+    assert rec.focus == [None]
+
+
+def test_explicit_date_beats_today_expression(env, monkeypatch):
+    items = {"12-01": {"md": "12-01", "ids": ["x-a"], "exact": True}}
+    fdb, _ = _today_env(env, monkeypatch, items, results={("1597-09-16",): [Hit(entry("1597-09-16"), 0.1)]})
+    call(ev(body("오늘의 일기 말고 정유년 9월 16일 일기")))
+    assert fdb.search_calls[0] == (5, ["1597-09-16"])
+
+
+def test_missing_today_map_falls_back_to_general_search(env, monkeypatch):
+    fdb, rec = _today_env(env, monkeypatch, {})
+    status, _ = call(ev(body("오늘의 장군님은 어떠셨습니까")))
+    assert status == 200 and fdb.search_calls == [(5, None)] and rec.focus == [None]
+
+
+def test_today_lookup_failure_falls_back_to_general_search(env, monkeypatch):
+    fdb, rec = _today_env(env, monkeypatch, {})
+    monkeypatch.setattr(chat, "today_table", lambda: (_ for _ in ()).throw(OSError("dynamodb down")))
+    status, out = call(ev(body("오늘의 장군님은 어떠셨습니까")))
+    assert status == 200 and fdb.search_calls == [(5, None)] and rec.focus == [None]
+
+
+# ---- 하루 한도 조사: 요청 1건은 어떤 경로로 끝나도 allow를 정확히 한 번만 부른다 ----
+@pytest.mark.parametrize("kwargs,message,allow_calls,refunds,status", [
+    ({}, "배 멀미 하셨어요?", 1, 0, 200),                                              # 일반 답
+    ({}, "요즘 정치 어때요?", 1, 0, 200),                                              # 현대 질문(LLM·검색 없음)
+    ({"embed_exc": BedrockUnavailable("x")}, "배 멀미 하셨어요?", 1, 1, 503),         # Bedrock 장애: 차감 1, 환불 1(순 0)
+    ({"answer_exc": BedrockUnavailable("x")}, "배 멀미 하셨어요?", 1, 1, 503),
+    ({"quota_ok": False}, "배 멀미 하셨어요?", 1, 0, 429),                            # 한도: 시도 1회, 환불 없음
+])
+def test_one_request_calls_allow_once_and_refund_only_on_503(env, kwargs, message, allow_calls, refunds, status):
+    _, rec = env(**kwargs)
+    assert call(ev(body(message)))[0] == status
+    assert len(rec.quota_calls) == allow_calls and len(rec.refunds) == refunds
+
+
+@pytest.mark.parametrize("bad", [body(""), body("가" * 301), "not json"])
+def test_invalid_requests_never_touch_the_quota(env, bad):
+    _, rec = env()
+    assert call(ev(bad))[0] == 400 and rec.quota_calls == [] and rec.refunds == []
+
+
+def test_today_lookup_path_still_calls_allow_once(env, monkeypatch):
+    items = {"12-01": {"md": "12-01", "ids": ["x-a"], "exact": True}}
+    _, rec = _today_env(env, monkeypatch, items, results={("x-a",): [Hit(entry("x-a"), 0.1)]})
+    call(ev(body("오늘의 장군님은 어떠셨습니까")))
+    assert len(rec.quota_calls) == 1 and rec.refunds == []
+
+
+def test_net_count_after_503_is_zero_with_the_real_quota_functions():
+    """실제 allow/refund로 확인: 503이면 차감 1 + 환불 1 = 순 0, 환불이 카운트를 늘리지 않는다."""
+    import boto3
+    from moto import mock_aws
+    from nanjung.quota import allow, refund
+    with mock_aws():
+        t = boto3.resource("dynamodb", region_name="ap-northeast-2").create_table(
+            TableName="U", BillingMode="PAY_PER_REQUEST", KeySchema=[{"AttributeName": "pk", "KeyType": "HASH"}],
+            AttributeDefinitions=[{"AttributeName": "pk", "AttributeType": "S"}])
+        now = datetime(2026, 12, 1, 12, 0, tzinfo=KST)
+        assert allow(t, "c", now, 20) and refund(t, "c", now)
+        assert t.get_item(Key={"pk": "c#2026-12-01"})["Item"]["cnt"] == 0
+        assert refund(t, "c", now) is False                       # 이미 0이면 더 내려가지도 올라가지도 않는다
+        assert t.get_item(Key={"pk": "c#2026-12-01"})["Item"]["cnt"] == 0
+
+
+def test_every_request_is_logged_with_a_short_client_id_and_status(env, caplog):
+    import logging
+    env()
+    with caplog.at_level(logging.INFO, logger="nanjung.handlers.chat"):
+        call(ev(body("배 멀미 하셨어요?")))
+        call(ev(body("")))
+    text = [r.getMessage() for r in caplog.records]
+    assert any("cid=00000000" in m and "status=200" in m for m in text)
+    assert any("status=400" in m for m in text)
+    assert not any(CID in m for m in text)                          # 전체 id는 로그에 남기지 않는다(앞 8자만)
+
+
+# ---- 리뷰 반영: 오늘 + 부정·상대 날짜·명시 날짜 ----
+ITEMS_TODAY = {"12-01": {"md": "12-01", "ids": ["x-a"], "exact": True}}
+
+
+def _no_today_lookup(monkeypatch):
+    monkeypatch.setattr(chat, "today_table", lambda: (_ for _ in ()).throw(AssertionError("오늘 조회하면 안 됨")))
+
+
+@pytest.mark.parametrize("msg", ["오늘 일기 말고 배 멀미 얘기해 줘요", "오늘의 일기는 빼고 활 이야기를 해 주세요",
+                                 "오늘은 어떠한 점심을 먹을까요?", "오늘의 일기 말고 무술년 11월 17일 다음 날"])
+def test_negation_or_non_request_does_not_force_todays_diary(env, monkeypatch, msg):
+    fdb, rec = _today_env(env, monkeypatch, ITEMS_TODAY)
+    _no_today_lookup(monkeypatch)
+    status, _ = call(ev(body(msg)))
+    assert status == 200 and rec.focus == [None] and ("x-a" not in [i for c in fdb.search_calls for i in (c[1] or [])])
+
+
+def test_relative_day_after_todays_diary_uses_neighbor_of_todays_id_not_previous_answer(env, monkeypatch):
+    fdb, rec = _today_env(env, monkeypatch, ITEMS_TODAY, results={("x-0",): [Hit(entry("x-0"), 0.1)]})
+    fdb.neighbors = {("x-a", -1): "x-0", ("1592-06-10", -1): "WRONG"}
+    call(ev(body("오늘의 일기 전날은요?", last_source_ids=["1592-06-10"])))
+    assert fdb.search_calls[0] == (5, ["x-0"]) and rec.focus == [["x-0"]]
+
+
+def test_relative_day_after_todays_diary_without_neighbor_falls_back_to_general_search(env, monkeypatch):
+    fdb, rec = _today_env(env, monkeypatch, ITEMS_TODAY)
+    fdb.neighbors = {}
+    call(ev(body("오늘의 일기 다음 날은요?")))
+    assert fdb.search_calls == [(5, None)] and rec.focus == [None]
+
+
+def test_explicit_date_with_empty_result_does_not_fall_back_to_today(env, monkeypatch):
+    fdb, rec = _today_env(env, monkeypatch, ITEMS_TODAY)
+    _no_today_lookup(monkeypatch)
+    fdb.neighbors = {}                                              # 무술년 11월 17일은 마지막 날 → 다음 날 없음
+    call(ev(body("무술년 11월 17일 다음 날은 오늘의 일기와 비슷한가요?")))
+    assert rec.focus == [None]
+
+
+def test_event_beats_today_expression(env, monkeypatch):
+    fdb, _ = _today_env(env, monkeypatch, ITEMS_TODAY, results={("1597-09-16",): [Hit(entry("1597-09-16"), 0.1)]})
+    _no_today_lookup(monkeypatch)
+    call(ev(body("명량 오늘의 장군")))
+    assert fdb.search_calls[0] == (5, ["1597-09-16"])
+
+
+def test_negated_today_with_relative_day_does_not_anchor_on_previous_answer(env, monkeypatch):
+    # '오늘의 일기 말고 전날'은 기준(명시 날짜·사건)이 없으니 직전 근거로 전날을 고정하지 않고 일반 검색으로 넘긴다
+    fdb, rec = _today_env(env, monkeypatch, ITEMS_TODAY, results={("WRONG",): [Hit(entry("WRONG"), 0.1)]})
+    _no_today_lookup(monkeypatch)
+    fdb.neighbors = {("1592-06-10", -1): "WRONG"}
+    call(ev(body("오늘의 일기 말고 전날 이야긴요?", last_source_ids=["1592-06-10"])))
+    assert fdb.search_calls == [(5, None)] and rec.focus == [None]
+
+
+def test_plain_followup_still_uses_previous_answer_as_anchor(env, monkeypatch):
+    fdb, rec = _today_env(env, monkeypatch, ITEMS_TODAY, results={("1592-06-09",): [Hit(entry("1592-06-09"), 0.1)]})
+    fdb.neighbors = {("1592-06-10", -1): "1592-06-09"}
+    call(ev(body("전날은요?", last_source_ids=["1592-06-10"])))
+    assert fdb.search_calls[0] == (5, ["1592-06-09"])

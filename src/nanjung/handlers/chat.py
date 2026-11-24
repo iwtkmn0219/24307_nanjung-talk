@@ -14,8 +14,10 @@ from botocore.config import Config
 from .. import db
 from ..answer import answer, decide_mode, is_modern
 from ..bedrock import API_CONFIG, BedrockUnavailable, api_client, embed
-from ..date_resolver import resolve
+from ..date_resolver import (NEGATION_RE, is_today_question, mentions_date_or_event, relative_direction,
+                             resolve)
 from ..quota import KST, allow, refund
+from ..today import pick
 from .common import response, shared_conn
 
 MSG_LIMIT = "오늘은 그만 쉬어야겠소. 내일 다시 오시오."
@@ -35,6 +37,7 @@ DB_OP_S = float(db.CONNECT_TIMEOUT)                                         # pg
 DB_CONN_S = 2 * DB_OP_S                                                     # 헬스체크 + 재연결
 BEDROCK_CALL_S = API_CONFIG.connect_timeout + API_CONFIG.read_timeout       # embed·converse(재시도 없음)
 log = logging.getLogger(__name__)
+log.setLevel(logging.INFO)  # Lambda 기본(WARNING)에서는 요청 로그가 안 남으므로 이 로거만 INFO로
 
 
 class BadRequest(Exception):
@@ -74,6 +77,25 @@ def usage_table():
     return _usage_table
 
 
+_today_table = None
+
+
+def today_table():
+    global _today_table
+    if _today_table is None:
+        import boto3
+        _today_table = boto3.resource("dynamodb", config=DDB_CONFIG).Table(os.environ["TODAY_TABLE"])
+    return _today_table
+
+
+def today_entry_id(now: datetime) -> str | None:
+    """화면의 '오늘의 일기'(GET /diary)와 같은 규칙: KST 오늘 월·일 매핑, 후보가 여럿이면 KST 연도로 돌려 쓴다."""
+    item = today_table().get_item(Key={"md": f"{now:%m-%d}"}).get("Item")
+    if not item or not item.get("ids"):
+        return None
+    return pick({"ids": list(item["ids"])}, now.year)
+
+
 def now_kst() -> datetime:
     return datetime.now(KST)
 
@@ -109,24 +131,45 @@ def _body(event) -> tuple[str, list, list[str]]:
     return message.strip(), history[-MAX_HISTORY_ITEMS:], ids[:MAX_SOURCE_IDS]
 
 
-def _modern(message: str, deadline: "Deadline") -> dict:
-    """현대 질문은 LLM 없이 고정 답변. 추천 질문용 검색이 실패해도 고정 답변은 돌려준다."""
-    try:  # 추천 질문은 시간이 남을 때만. 모자라거나 실패하면 추천 없이 고정 답변
-        deadline.require(DB_CONN_S)
-        conn = get_conn()
-        deadline.require(BEDROCK_CALL_S)
-        qvec = embed(message, client=api_client())
-        deadline.require(DB_OP_S)
-        hits = db.search(conn, qvec, k=SEARCH_K)
-    except OutOfTime:
-        hits = []
+def _modern(message: str) -> dict:
+    """현대 질문은 LLM·검색 없이 고정 답변과 고정 추천 질문만 돌려준다(DB·Bedrock 장애와 무관)."""
+    return answer(message, [], [], "modern")
+
+
+def _cid8(event) -> str:
+    """로그용 클라이언트 id 앞 8자(전체 id는 남기지 않는다)."""
+    try:
+        return _client_id(event)[:8]
     except Exception:
-        log.warning("현대 질문 추천 검색 실패", exc_info=True)
-        hits = []
-    return answer(message, hits, [], "modern")
+        return "-"
+
+
+def _todays_diary_ids(conn, message: str, now: datetime, deadline: "Deadline") -> list[str] | None:
+    """오늘의 일기 id(상대 표현이 있으면 그 이웃). 없거나 조회가 실패하면 None → 일반 검색."""
+    deadline.require(DDB_CALL_S)
+    try:
+        today_id = today_entry_id(now)
+    except Exception:  # 오늘의 일기 조회가 실패해도 질문은 일반 검색으로 답한다
+        log.warning("오늘의 일기 조회 실패", exc_info=True)
+        return None
+    if not today_id:
+        return None
+    direction = relative_direction(message)
+    if not direction:
+        return [today_id]
+    deadline.require(DB_OP_S)
+    nid = db.neighbor(conn, today_id, direction)   # '오늘의 일기 전날'은 직전 답변이 아니라 오늘 일기의 이웃
+    return [nid] if nid else None
 
 
 def lambda_handler(event, context):
+    """요청마다 한 줄 로그(앞 8자 id, 상태 코드)를 남겨, 하루 한도 같은 문제를 나중에 추적할 수 있게 한다."""
+    resp = _handle(event, context)
+    log.info("chat cid=%s status=%s", _cid8(event), resp["statusCode"])
+    return resp
+
+
+def _handle(event, context):
     try:
         client_id = _client_id(event)
         message, history, last_ids = _body(event)
@@ -144,7 +187,7 @@ def lambda_handler(event, context):
         return response(429, {"answer": MSG_LIMIT})
 
     if is_modern(message):
-        return response(200, _modern(message, deadline))
+        return response(200, _modern(message))
 
     try:
         deadline.require(DB_CONN_S)
@@ -153,7 +196,13 @@ def lambda_handler(event, context):
         def neighbor(i, d):
             deadline.require(DB_OP_S)
             return db.neighbor(conn, i, d)
-        date_ids = resolve(message, last_ids, neighbor)
+        # '오늘의 일기'를 직접 요청한 경우에만 오늘의 일기로 연결한다. 부정("오늘 일기 말고…")이나 명시 날짜·사건이
+        # 있으면 그쪽 해석을 따르고, 그 결과가 비어도 오늘 일기로 되돌아가지 않는다(일반 검색).
+        if is_today_question(message) and not NEGATION_RE.search(message) and not mentions_date_or_event(message):
+            date_ids = _todays_diary_ids(conn, message, charged_at, deadline)
+        else:
+            # '오늘'을 말했지만 오늘 일기로 연결하지 않는 경우(부정 등)에는 직전 답변을 상대일 기준으로 쓰지 않는다
+            date_ids = resolve(message, [] if is_today_question(message) else last_ids, neighbor)
         deadline.require(BEDROCK_CALL_S)
         qvec = embed(message, client=api_client())
         hits = []
