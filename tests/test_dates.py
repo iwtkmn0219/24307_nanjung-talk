@@ -53,3 +53,8 @@ def test_label_and_id():
     assert entry_id(1592, 4, 13, False) == "1592-04-13"
     (e,) = assign_dates([raw(1592, 4, 13, "壬寅", gy="壬辰")])
     assert label(e) == "임진년(1592) 4월 13일"
+
+
+def test_day_30_missing_in_library_month_falls_back_to_day_29_plus_one():
+    # 전서본 정유 8/30(戊子)이 있지만 라이브러리의 정유 8월은 29일까지다
+    assert to_solar(1597, 8, 30, False, "戊子") == (date(1597, 10, 10), False)

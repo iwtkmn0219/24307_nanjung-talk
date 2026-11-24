@@ -24,6 +24,8 @@ def ganji_of(d: date) -> str:
 def _library_date(y: int, m: int, d: int, is_leap: bool) -> date:
     c = KoreanLunarCalendar()
     if not c.setLunarDate(y, m, d, is_leap):
+        if d == 30:  # 일기의 달은 30일인데 라이브러리의 달은 29일인 경우 → 29일 + 1
+            return _library_date(y, m, 29, is_leap) + timedelta(days=1)
         raise ValueError(f"변환할 수 없는 음력 날짜: {y}-{'L' if is_leap else ''}{m}-{d}")
     return date.fromisoformat(c.SolarIsoFormat())
 
