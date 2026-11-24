@@ -69,10 +69,13 @@ class FakeTable:
         return W()
 
 
-def processed(lunar_days):
-    return json.dumps([{"id": f"1592-04-{d}", "translation": f"캐시{d}", "emotion": "비통",
-                        "intro": "캐시 소개하오.", "questions": ["a", "b", "c"]} for d in lunar_days],
-                      ensure_ascii=False)
+ORIGINALS = {13: "十三日壬寅。晴。出東軒公事。", 14: "十四日癸卯。雨。"}
+
+
+def processed(lunar_days, originals=ORIGINALS):
+    return json.dumps([{"id": f"1592-04-{d}", "original": originals.get(d), "translation": f"캐시{d}",
+                        "emotion": "비통", "intro": "캐시 소개하오.", "questions": ["a", "b", "c"]}
+                       for d in lunar_days], ensure_ascii=False)
 
 
 @pytest.fixture
@@ -161,3 +164,17 @@ def test_enrich_failure_saves_finished_entries_then_raises(fakes, monkeypatch):
         ingest.lambda_handler({"action": "ingest", "key": "raw/X.html"}, None)
     saved = json.loads(s3.objects["processed/X.json"])
     assert [d["id"] for d in saved] == ["1592-04-13"] and fdb.upserts == []
+
+
+def test_cache_with_changed_original_is_re_enriched(fakes):
+    s3, br, fdb, _ = fakes({**BASE, "processed/X.json": processed([13, 14], {13: "옛 원문", 14: ORIGINALS[14]})})
+    ingest.lambda_handler({"action": "ingest", "key": "raw/X.html"}, None)
+    assert br.converse_calls == 1
+    assert [e.translation for e, _ in fdb.upserts] == ["번역13", "캐시14"]
+    assert json.loads(s3.objects["processed/X.json"])[0]["original"] == ORIGINALS[13]
+
+
+def test_get_conn_uses_reconnecting_shared_conn(monkeypatch):
+    sentinel = object()
+    monkeypatch.setattr(ingest, "shared_conn", lambda: sentinel)
+    assert ingest.get_conn() is sentinel

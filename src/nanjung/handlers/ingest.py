@@ -14,9 +14,9 @@ from ..enrich import enrich
 from ..models import MonthRef
 from ..parse import parse_month_page
 from ..today import build_today_map
+from .common import shared_conn
 
 ENRICH_FIELDS = ("translation", "emotion", "intro", "questions")
-_conn = None
 
 
 def s3_client():
@@ -30,10 +30,7 @@ def today_table():
 
 
 def get_conn():
-    global _conn
-    if _conn is None:
-        _conn = db.connect()
-    return _conn
+    return shared_conn()
 
 
 def _read(s3, key: str) -> str | None:
@@ -70,7 +67,7 @@ def _ingest(key: str) -> dict:
 
     for e in entries:
         c = cached.get(e.id)
-        if c is not None:
+        if c is not None and c.get("original") == e.original:  # 원문이 바뀐 날은 다시 번역
             done.append(replace(e, **{f: c[f] for f in ENRICH_FIELDS}))
             continue
         try:

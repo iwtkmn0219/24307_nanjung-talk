@@ -360,7 +360,7 @@ def test_unknown_action_raises(): ...
 - [ ] **Step 5: 콘솔 체크리스트대로 인프라를 만들고** `sam build && sam deploy --guided`
 - [ ] **Step 6: 원문 업로드** `aws s3 sync data/raw s3://nanjung-data-<id>/raw/`
 - [ ] **Step 7: 스키마 생성** `aws lambda invoke --function-name <Ingest> --payload '{"action":"init_schema"}' --cli-binary-format raw-in-base64-out out.json`
-- [ ] **Step 8: 임진년만 먼저 적재** `scripts/ingest_all.sh 0080_010_00[1-7]` → 결과 count 합계가 130이어야 한다(30+29+29+22+5+10+5). `processed/` JSON 3개를 열어 번역과 태그를 눈으로 확인한다.
+- [ ] **Step 8: 임진년만 먼저 적재** `bash scripts/ingest_all.sh '0080_010_00[1-7]'` → 결과 count 합계가 130이어야 한다(30+29+29+22+5+10+5). `processed/` JSON 3개를 열어 번역과 태그를 눈으로 확인한다.
 - [ ] **Step 9: 나머지 전부 적재** → 이후 `build_today_map` 호출. RDS 행 수 1,593, DynamoDB 항목 366이어야 한다.
 - [ ] **Step 10: Commit** `feat: 적재 Lambda와 인프라 템플릿`
 

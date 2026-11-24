@@ -10,7 +10,7 @@ Parameters:
     Default: nanjung
   DbUser:
     Type: String
-    Default: nanjung_app
+    Description: MVP는 RDS 마스터 사용자(init_schema가 CREATE EXTENSION vector를 실행함)
   DbPassword:
     Type: String
     NoEcho: true
