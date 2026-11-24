@@ -134,3 +134,24 @@ def test_behavior_check_flags_evidence_date_lists():
     assert date_list("정유년 7월 25일, 갑오년 4월 24일, 정유년 6월 15일의 기록이 있소.") is True
     assert date_list("그날은 4월 13일이었소. 7월 3일에도 비슷했소.") is False       # 두 날짜는 정상
     assert date_list("맑았소.") is False
+
+
+def test_date_list_counts_the_same_date_written_differently_once():
+    import sys
+    sys.path.insert(0, "scripts")
+    from behavior_check import date_list
+    assert date_list("4월 1일, 4월01일, 4월  1일의 일이오.") is False        # 같은 날짜 표기 흔들림
+    assert date_list("4월 1일, 4월 2일, 04월 03일에 있었소.") is True
+
+
+def test_behavior_check_render_shows_date_list_per_row_and_in_summary():
+    import sys
+    sys.path.insert(0, "scripts")
+    from behavior_check import render
+    rows = [{"q": "a", "why": "w", "mode": "normal", "src": [], "internal": [], "date_list": True, "emoji": 0,
+             "serious_ok": True, "answer": "4월 1일, 4월 2일, 4월 3일"},
+            {"q": "b", "why": "w", "mode": "normal", "src": [], "internal": ["주어진"], "date_list": False, "emoji": 0,
+             "serious_ok": True, "answer": "주어진 일기"}]
+    out = render(rows)
+    assert "날짜나열=True" in out and "날짜나열=False" in out
+    assert "내부 표현이 나온 답변: 1 / 2" in out and "날짜 3개 이상 나열: 1" in out

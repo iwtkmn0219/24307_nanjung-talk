@@ -31,7 +31,7 @@ CASES = [  # (질문, 점검 이유, serious 여부)
 ]
 
 
-DATE_RE = re.compile(r"\d{1,2}월\s*\d{1,2}일")
+DATE_RE = re.compile(r"(\d{1,2})월\s*(\d{1,2})일")
 
 
 def internal_phrases(text: str) -> list[str]:
@@ -39,8 +39,9 @@ def internal_phrases(text: str) -> list[str]:
 
 
 def date_list(text: str) -> bool:
-    """근거로 쓴 일기의 날짜를 세 개 이상 줄줄이 나열했는가(두 개까지는 정상)."""
-    return len(set(DATE_RE.findall(text))) >= 3
+    """근거로 쓴 일기의 날짜를 세 개 이상 줄줄이 나열했는가(두 개까지는 정상). 같은 날짜의 표기 흔들림은 하나로 센다."""
+    days = {(int(m), int(d)) for m, d in DATE_RE.findall(text)}
+    return len(days) >= 3
 
 
 def run(api: str) -> list[dict]:
@@ -54,11 +55,20 @@ def run(api: str) -> list[dict]:
     return rows
 
 
+def render(rows: list[dict]) -> str:
+    nl = chr(10)
+    lines = []
+    for r in rows:
+        lines.append(nl + f"[{r['mode']}] {r['q']}  ({r['why']}) -> {r['src']} 내부표현={r['internal']} "
+                     f"날짜나열={r['date_list']} 이모지={r['emoji']}" + nl + r["answer"])
+    lines.append(nl + f"내부 표현이 나온 답변: {sum(bool(r['internal']) for r in rows)} / {len(rows)}"
+                 f" | 날짜 3개 이상 나열: {sum(r['date_list'] for r in rows)}"
+                 f" | serious 점검 실패: {sum(not r['serious_ok'] for r in rows)}")
+    return nl.join(lines)
+
+
 if __name__ == "__main__":
     rows = run(os.environ["API_URL"])
     if len(sys.argv) > 1:
         Path(sys.argv[1]).write_text(json.dumps(rows, ensure_ascii=False, indent=1), encoding="utf-8")
-    for r in rows:
-        print(f"\n[{r['mode']}] {r['q']}  ({r['why']}) -> {r['src']} 내부표현={r['internal']} 이모지={r['emoji']}\n{r['answer']}")
-    print("\n내부 표현이 나온 답변:", sum(bool(r["internal"]) for r in rows), "/", len(rows),
-          "| serious 점검 실패:", sum(not r["serious_ok"] for r in rows))
+    print(render(rows))
