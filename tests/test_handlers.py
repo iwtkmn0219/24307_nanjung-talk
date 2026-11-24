@@ -286,3 +286,33 @@ def test_modern_question_uses_search_for_suggestions_when_healthy(env, monkeypat
     monkeypatch.setattr(chat, "answer", real.answer)
     _, out = call(ev(body("요즘 일본이랑 사이 어때요?")))
     assert out["suggestions"] == ["q1", "q2", "q3"] and fdb.search_calls == [(5, None)]
+
+
+class Ctx:
+    def __init__(self, ms): self.ms = ms
+    def get_remaining_time_in_millis(self): return self.ms
+
+
+def test_skips_bedrock_when_lambda_time_nearly_gone(env):
+    _, rec = env()
+    r = chat.lambda_handler(ev(body()), Ctx(100))
+    assert r["statusCode"] == 503 and rec.clients == []
+    assert json.loads(r["body"]) == {"answer": "잠시 숨을 고르겠소. 조금 뒤 다시 물어 주시오."}
+
+
+def test_slow_db_before_generation_skips_converse(env, monkeypatch):
+    fdb, rec = env()
+    clock = [1000.0]
+    monkeypatch.setattr(chat, "monotonic", lambda: clock[0])
+    real_search = fdb.search
+
+    def slow_search(*a, **kw):
+        clock[0] += 15  # 검색이 15초 걸림 → 남은 예산이 생성 호출 예산보다 작다
+        return real_search(*a, **kw)
+    fdb.search = slow_search
+    status, out = call(ev(body()))
+    assert status == 503 and [c[0] for c in rec.clients] == ["embed"]  # converse 생략
+
+
+def test_request_budget_is_shorter_than_frontend_timeout():
+    assert chat.REQUEST_BUDGET_S < 25  # 프론트 타이머(25초)보다 먼저 503으로 끝낸다

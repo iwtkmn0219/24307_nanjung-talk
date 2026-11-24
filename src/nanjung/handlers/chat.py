@@ -7,10 +7,11 @@ import logging
 import os
 import uuid
 from datetime import datetime
+from time import monotonic
 
 from .. import db
 from ..answer import answer, decide_mode, is_modern
-from ..bedrock import BedrockUnavailable, api_client, embed
+from ..bedrock import API_CONFIG, BedrockUnavailable, api_client, embed
 from ..date_resolver import resolve
 from ..quota import KST, allow
 from .common import response, shared_conn
@@ -21,6 +22,11 @@ MAX_MESSAGE = 300
 MAX_HISTORY_ITEMS = 50
 MAX_SOURCE_IDS = 10
 SEARCH_K = 5
+# 요청 전체 마감: 프론트 타이머(25초)와 Lambda 29초보다 먼저 503으로 끝낸다
+REQUEST_BUDGET_S = 22.0
+LAMBDA_MARGIN_S = 1.0
+# Bedrock 호출 하나가 SDK 설정상 걸릴 수 있는 최대 시간(재시도 없음)
+BEDROCK_CALL_S = API_CONFIG.connect_timeout + API_CONFIG.read_timeout
 log = logging.getLogger(__name__)
 
 
@@ -28,13 +34,35 @@ class BadRequest(Exception):
     pass
 
 
+class Deadline:
+    """요청 마감. 외부 호출 전에 남은 시간이 그 호출의 최대 시간보다 적으면 BedrockUnavailable(→503)."""
+
+    def __init__(self, context):
+        budget = REQUEST_BUDGET_S
+        if context is not None and hasattr(context, "get_remaining_time_in_millis"):
+            budget = min(budget, context.get_remaining_time_in_millis() / 1000 - LAMBDA_MARGIN_S)
+        self.end = monotonic() + budget
+
+    def require(self, seconds: float) -> None:
+        if self.end - monotonic() < seconds:
+            raise BedrockUnavailable("요청 시간 예산 부족")
+
+
 def get_conn():
     return shared_conn()
 
 
+_usage_table = None
+
+
 def usage_table():
-    import boto3
-    return boto3.resource("dynamodb").Table(os.environ["USAGE_TABLE"])
+    global _usage_table
+    if _usage_table is None:
+        import boto3
+        from botocore.config import Config
+        cfg = Config(connect_timeout=2, read_timeout=3, retries={"total_max_attempts": 2, "mode": "standard"})
+        _usage_table = boto3.resource("dynamodb", config=cfg).Table(os.environ["USAGE_TABLE"])
+    return _usage_table
 
 
 def now_kst() -> datetime:
@@ -72,10 +100,12 @@ def _body(event) -> tuple[str, list, list[str]]:
     return message.strip(), history[-MAX_HISTORY_ITEMS:], ids[:MAX_SOURCE_IDS]
 
 
-def _modern(message: str) -> dict:
+def _modern(message: str, deadline: "Deadline") -> dict:
     """현대 질문은 LLM 없이 고정 답변. 추천 질문용 검색이 실패해도 고정 답변은 돌려준다."""
     try:
-        hits = db.search(get_conn(), embed(message, client=api_client()), k=SEARCH_K)
+        conn = get_conn()
+        deadline.require(BEDROCK_CALL_S)
+        hits = db.search(conn, embed(message, client=api_client()), k=SEARCH_K)
     except Exception:
         log.warning("현대 질문 추천 검색 실패", exc_info=True)
         hits = []
@@ -89,21 +119,25 @@ def lambda_handler(event, context):
     except BadRequest as e:
         return response(400, {"error": str(e)})
 
+    deadline = Deadline(context)
     if not allow(usage_table(), client_id, now_kst(), int(os.environ.get("DAILY_LIMIT", "20"))):
         return response(429, {"answer": MSG_LIMIT})
 
     if is_modern(message):
-        return response(200, _modern(message))
+        return response(200, _modern(message, deadline))
 
-    conn = get_conn()
     try:
+        conn = get_conn()
         date_ids = resolve(message, last_ids, lambda i, d: db.neighbor(conn, i, d))
+        deadline.require(BEDROCK_CALL_S)
         qvec = embed(message, client=api_client())
         hits = db.search(conn, qvec, k=SEARCH_K, date_ids=date_ids) if date_ids else []
         date_matched = bool(hits)
         if not hits:
             hits = db.search(conn, qvec, k=SEARCH_K)
         mode = decide_mode(message, hits, float(os.environ.get("SIM_THRESHOLD", "0.30")), date_matched)
+        if mode in ("normal", "serious"):
+            deadline.require(BEDROCK_CALL_S)
         return response(200, answer(message, hits, history, mode, client=api_client()))
     except BedrockUnavailable:
         return response(503, {"answer": MSG_UNAVAILABLE})
