@@ -1,0 +1,131 @@
+"""RDS PostgreSQL(pgvector) 접근 계층. pg8000.native 사용."""
+from __future__ import annotations
+
+import json
+import os
+import ssl
+from pathlib import Path
+
+from .models import DiaryEntry, Hit
+
+COLUMNS = ("id", "source_id", "ganji_year", "lunar_year", "lunar_month", "is_leap", "lunar_day",
+           "day_ganji", "solar_date", "ganji_mismatch", "label", "original", "translation",
+           "emotion", "intro", "questions")
+_COLS = ", ".join(COLUMNS)
+SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
+CONNECT_TIMEOUT = 5
+
+
+def ssl_context() -> ssl.SSLContext:
+    """RDS 인증서는 Amazon 사설 CA라서 DB_SSL_CA(RDS global bundle 경로)를 주면 그것으로 검증한다."""
+    ca = os.environ.get("DB_SSL_CA")
+    return ssl.create_default_context(cafile=ca) if ca else ssl.create_default_context()
+
+
+def connect():
+    import pg8000.native
+    return pg8000.native.Connection(
+        host=os.environ["DB_HOST"], database=os.environ["DB_NAME"],
+        user=os.environ["DB_USER"], password=os.environ["DB_PASSWORD"],
+        port=int(os.environ.get("DB_PORT", "5432")), ssl_context=ssl_context(),
+        timeout=CONNECT_TIMEOUT)
+
+
+def init_schema(conn) -> None:
+    for stmt in SCHEMA_PATH.read_text(encoding="utf-8").split(";"):
+        if stmt.strip():
+            conn.run(stmt)
+
+
+def _vec(v: list[float]) -> str:
+    return "[" + ",".join(repr(float(x)) for x in v) + "]"
+
+
+def upsert(conn, e: DiaryEntry, embedding: list[float]) -> None:
+    params = {c: getattr(e, c) for c in COLUMNS}
+    params["questions"] = json.dumps(e.questions, ensure_ascii=False)
+    params["emb"] = _vec(embedding)
+    values = ", ".join(f":{c}" for c in COLUMNS if c != "questions")
+    updates = ", ".join(f"{c} = EXCLUDED.{c}" for c in COLUMNS[1:]) + ", embedding = EXCLUDED.embedding"
+    conn.run(
+        f"INSERT INTO diary ({_COLS}, embedding) VALUES ({values}, :questions::jsonb, :emb::vector) "
+        f"ON CONFLICT (id) DO UPDATE SET {updates}", **params)
+
+
+def search_sql(date_ids: list[str] | None) -> str:
+    where = " WHERE id = ANY(:ids)" if date_ids else ""
+    return (f"SELECT {_COLS}, 1 - (embedding <=> :qvec::vector) AS similarity FROM diary{where} "
+            "ORDER BY similarity DESC LIMIT :k")
+
+
+def _entry(row) -> DiaryEntry:
+    d = dict(zip(COLUMNS, row))
+    if isinstance(d["questions"], str):
+        d["questions"] = json.loads(d["questions"])
+    return DiaryEntry(**d)
+
+
+def search(conn, qvec: list[float], k: int = 5, date_ids: list[str] | None = None) -> list[Hit]:
+    params = {"qvec": _vec(qvec), "k": k}
+    if date_ids:
+        params["ids"] = list(date_ids)
+    rows = conn.run(search_sql(date_ids), **params)
+    return [Hit(_entry(r[:len(COLUMNS)]), float(r[len(COLUMNS)])) for r in rows]
+
+
+def get(conn, ids: list[str]) -> list[DiaryEntry]:
+    if not ids:
+        return []
+    by_id = {e.id: e for e in map(_entry, conn.run(f"SELECT {_COLS} FROM diary WHERE id = ANY(:ids)",
+                                                   ids=list(ids)))}
+    return [by_id[i] for i in ids if i in by_id]
+
+
+def _neighbor_sql(direction: int) -> str:
+    op, order = (">", "ASC") if direction > 0 else ("<", "DESC")
+    return (f"SELECT id FROM diary WHERE solar_date {op} "
+            "(SELECT solar_date FROM diary WHERE id = :id) "
+            f"ORDER BY solar_date {order}, id {order} LIMIT 1")
+
+
+def neighbor(conn, entry_id: str, direction: int) -> str | None:
+    rows = conn.run(_neighbor_sql(direction), id=entry_id)
+    return rows[0][0] if rows else None
+
+
+def all_dates(conn) -> list[tuple[str, object]]:
+    return [(r[0], r[1]) for r in conn.run("SELECT id, solar_date FROM diary ORDER BY solar_date, id")]
+
+
+def stats(conn) -> dict:
+    """적재 점검용: 행 수, 감정 분포, 豚(아들 겸칭)이 있는데 번역에 '돼지'가 남은 항목."""
+    count = conn.run("SELECT count(*) FROM diary")[0][0]
+    emotions = {e: n for e, n in conn.run("SELECT emotion, count(*) FROM diary GROUP BY emotion ORDER BY 2 DESC")}
+    pig = [r[0] for r in conn.run(
+        "SELECT id FROM diary WHERE original LIKE '%豚%' AND translation LIKE '%돼지%' ORDER BY id")]
+    return {"count": count, "emotions": emotions, "pig_in_son_entries": pig}
+
+
+def sync_emotions(conn, items: list[tuple[str, str, str, str]]) -> dict:
+    """items=(id, original, translation, emotion). DB의 감정을 주어진 값에 맞춘다(임베딩은 건드리지 않는다).
+
+    멱등이다: 이미 같은 행은 건드리지 않는다. DB에 없는 행(missing)과 원문 또는 번역이 달라 낡은 행(stale)은
+    갱신하지 않고 따로 돌려준다(번역이 다르면 임베딩도 옛 번역 기준이므로 감정만 맞추면 안 된다).
+    """
+    out: dict = {"updated": [], "missing": [], "stale": []}
+    if not items:
+        return out
+    rows = {r[0]: (r[1], r[2], r[3]) for r in conn.run(
+        "SELECT id, original, translation, emotion FROM diary WHERE id = ANY(:ids)", ids=[i[0] for i in items])}
+    for entry_id, original, translation, emotion in items:
+        cur = rows.get(entry_id)
+        if cur is None:
+            out["missing"].append(entry_id)
+        elif cur[0] != original or cur[1] != translation:
+            out["stale"].append(entry_id)
+        elif cur[2] != emotion:
+            hit = conn.run("UPDATE diary SET emotion = :emotion WHERE id = :id AND original = :original "
+                           "AND translation = :translation RETURNING id",
+                           id=entry_id, original=original, translation=translation, emotion=emotion)
+            (out["updated"] if hit else out["missing"]).append(entry_id)
+    return out

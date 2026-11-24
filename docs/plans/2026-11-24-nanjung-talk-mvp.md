@@ -4,7 +4,7 @@
 
 **Goal:** 난중일기 원문(이충무공전서본)에만 근거해 1인칭 하오체로 답하는 이순신 챗봇 웹 서비스를 3주 안에 AWS에 배포한다.
 
-**Architecture:** 로컬 PC 스크립트가 한국고전종합DB에서 월 단위 원문 HTML 61개를 받아 S3 `raw/`에 올린다. VPC 안의 적재 Lambda가 이를 일기 하루 단위로 나누고, 날짜를 변환하고, Bedrock으로 번역·태깅·임베딩한 뒤 RDS(pgvector)와 DynamoDB에 넣는다. 사용자 요청은 CloudFront → API Gateway(HTTP API) → 대화/일기 Lambda → RDS·Bedrock 순서로 흐른다. 기획서의 "긴 날은 문단 단위로 추가 분할"은 하지 않는다. 가장 긴 하루가 원문 610자라서 하루 = 검색 단위 하나로 충분하다.
+**Architecture:** 로컬 PC 스크립트가 한국고전종합DB에서 월 단위 원문 HTML 61개를 받아 S3 `raw/`에 올린다. VPC 안의 적재 Lambda가 이를 일기 하루 단위로 나누고, 날짜를 변환하고, Bedrock으로 번역·태깅·임베딩한 뒤 RDS(pgvector)와 DynamoDB에 넣는다. 사용자 요청은 CloudFront → API Gateway(HTTP API) → API Lambda 하나(`/chat`·`/diary`) → RDS·Bedrock 순서로 흐른다(기준 구조도: `docs/architecture.png`). 기획서의 "긴 날은 문단 단위로 추가 분할"은 하지 않는다. 가장 긴 하루가 원문 610자라서 하루 = 검색 단위 하나로 충분하다.
 
 **Tech Stack:** Python 3.12 (Lambda), AWS SAM, pg8000, beautifulsoup4, korean-lunar-calendar, boto3, pytest + moto, 바닐라 HTML/JS
 
@@ -28,7 +28,7 @@
 - 로그인은 없다. 브라우저별 `X-Client-Id`(UUID)를 기준으로 하루(KST) 질문 횟수를 `DAILY_LIMIT=20`으로 제한한다.
 - 모델 출력과 원문은 프론트에서 `textContent`로만 넣는다. `innerHTML`은 쓰지 않는다.
 - DB 비밀번호는 SAM 파라미터(`NoEcho`) → Lambda 환경변수로 넘긴다. Secrets Manager는 엔드포인트 비용 때문에 쓰지 않는다.
-- AWS 계정은 개인 루트 계정이다. 첫날 AWS Budgets 알림(월 USD 20)을 만들고, 이후 작업은 IAM 사용자로 한다.
+- AWS 계정은 개인 루트 계정이다. 첫날 AWS Budgets 알림(월 USD 40(사용자 결정))을 만들고, 이후 작업은 IAM 사용자로 한다.
 
 ## Review Focus
 
@@ -57,7 +57,9 @@ nanjungtalk/
       date_resolver.py      # 질문 속 날짜·사건·"다음 날" 해석
       answer.py             # 답변 모드 결정, 프롬프트, 출처 카드
       quota.py              # DynamoDB 사용량 제한
-      handlers/ingest.py chat.py diary.py
+      handlers/ingest.py    # 적재 Lambda
+      handlers/api.py       # API Lambda 진입점(routeKey로 /chat, /diary 분기)
+      handlers/chat.py diary.py common.py
   scripts/collect.py        # 로컬 PC 전용 수집기
   scripts/ingest_all.sh     # 적재 Lambda 일괄 호출
   sql/schema.sql
@@ -332,10 +334,10 @@ def test_pick_rotates_by_year(): assert pick({"ids":["a","b"]}, 2026) == "a"
 `infra/README.md`에 적을 콘솔 작업(값 고정):
 - VPC `nanjung-vpc` 10.0.0.0/16, 프라이빗 서브넷 2개(2a, 2c). NAT는 만들지 않는다.
 - 보안 그룹: `sg-lambda`(아웃바운드 전체), `sg-rds`(5432는 sg-lambda에서만), `sg-endpoint`(443은 sg-lambda에서만)
-- VPC 엔드포인트: `com.amazonaws.ap-northeast-2.bedrock-runtime`(Interface, Private DNS 켬, sg-endpoint), `s3`·`dynamodb`(Gateway, 프라이빗 라우팅 테이블)
-- RDS PostgreSQL 16, `db.t4g.micro`, 20GB, 퍼블릭 액세스 끔, 자동 백업 7일, DB 이름 `nanjung`
+- VPC 엔드포인트: `com.amazonaws.ap-northeast-2.bedrock-runtime`(Interface, Private DNS 켬, sg-endpoint, **AZ 1개(2a 서브넷)만** — 비용 절감, 사용자 결정), `s3`·`dynamodb`(Gateway, 프라이빗 라우팅 테이블)
+- RDS PostgreSQL 16, `db.t4g.micro`, 20GB, 퍼블릭 액세스 끔, 자동 백업 1일(무료 플랜 제한, 복구는 S3 processed에서 다시 적재), DB 이름 `nanjung`
 - S3 버킷 `nanjung-data-<계정ID>`(`raw/`, `processed/`)
-- AWS Budgets 월 USD 20 알림
+- AWS Budgets 월 USD 40 알림(사용자 결정)
 
 `template.yaml`(이 Task 범위):
 - `IngestFunction`: python3.12, 512MB, timeout 900, VPC 설정, `ReservedConcurrentExecutions: 2`
@@ -358,7 +360,7 @@ def test_unknown_action_raises(): ...
 - [ ] **Step 5: 콘솔 체크리스트대로 인프라를 만들고** `sam build && sam deploy --guided`
 - [ ] **Step 6: 원문 업로드** `aws s3 sync data/raw s3://nanjung-data-<id>/raw/`
 - [ ] **Step 7: 스키마 생성** `aws lambda invoke --function-name <Ingest> --payload '{"action":"init_schema"}' --cli-binary-format raw-in-base64-out out.json`
-- [ ] **Step 8: 임진년만 먼저 적재** `scripts/ingest_all.sh 0080_010_00[1-7]` → 결과 count 합계가 130이어야 한다(30+29+29+22+5+10+5). `processed/` JSON 3개를 열어 번역과 태그를 눈으로 확인한다.
+- [ ] **Step 8: 임진년만 먼저 적재** `bash scripts/ingest_all.sh '0080_010_00[1-7]'` → 결과 count 합계가 130이어야 한다(30+29+29+22+5+10+5). `processed/` JSON 3개를 열어 번역과 태그를 눈으로 확인한다.
 - [ ] **Step 9: 나머지 전부 적재** → 이후 `build_today_map` 호출. RDS 행 수 1,593, DynamoDB 항목 366이어야 한다.
 - [ ] **Step 10: Commit** `feat: 적재 Lambda와 인프라 템플릿`
 
@@ -415,20 +417,21 @@ def test_plain_question(): assert r("배 멀미 하셨어요?") is None
 **Interfaces:**
 - Consumes: `Hit`, `SOURCE_NOTE`, `bedrock.converse`
 - Produces:
-  - `MODERN_MARKERS = ("요즘","현대","오늘날","21세기","대통령","정당","선거","국회","총리","외교","정치")`
+  - `MODERN_MARKERS = ("요즘","현대","오늘날","21세기","대통령","정당","선거","국회","총리")`: 단독으로도 modern
+  - `CONTEXT_MARKERS = ("정치","외교")`: `NOW_MARKERS = ("요즘","현대","오늘날","지금")` 중 하나와 함께일 때만 modern(사용자 결정. "조선 조정의 정치"는 modern 아님)
   - `decide_mode(message: str, hits: list[Hit], threshold: float, date_matched: bool) -> Literal["normal","serious","out_of_scope","modern"]`
   - `answer(message: str, hits: list[Hit], history: list[dict], mode: str, client=None) -> dict`: 키는 `answer`, `mode`, `sources`, `suggestions`
   - `source_card(h: Hit) -> dict`: 키는 `id`, `label`, `original_line`(원문 첫 문장, 。 기준, 최대 60자), `translation_line`(번역 첫 문장), `note`(SOURCE_NOTE)
 
 모드 결정(이 순서):
-1. 메시지에 MODERN_MARKERS가 하나라도 있으면 `modern`
+1. 메시지에 MODERN_MARKERS가 있거나, CONTEXT_MARKERS와 NOW_MARKERS가 함께 있으면 `modern`
 2. `date_matched`가 False이고 최고 유사도 < threshold이면 `out_of_scope`
 3. 상위 3개 근거 중 `emotion == "비통"`이 있으면 `serious`
 4. 나머지는 `normal`
 
 응답 결정:
 - `out_of_scope`·`modern`은 **LLM을 호출하지 않는다.** 답변은 각각 `처음 듣는 말이라 내 답할 길이 없소.`, `후대의 일은 모르오.` 고정이다. 이어서 `"대신 내 일기 이야기를 들려주리다."`를 붙인다. `sources`는 빈 목록, `suggestions`는 최상위 hit의 `questions`다.
-- `normal`·`serious`는 상위 3개 근거의 원문·번역과 history(최근 6턴)를 넣어 converse를 호출한다(`max_tokens=400`, `temperature=0.6`). 카드는 최대 3개다.
+- `normal`·`serious`는 상위 3개 근거의 원문·번역과 history(최근 메시지 6개 = 질문·답변 3쌍. frontend 플랜과 같은 기준)를 넣어 converse를 호출한다(`max_tokens=400`, `temperature=0.6`). 카드는 최대 3개다.
 - 시스템 프롬프트 필수 지시:
   - 주어진 일기 내용에만 근거할 것
   - 없는 사실은 지어내지 말 것
@@ -490,9 +493,11 @@ def test_clients_are_independent(table): ...
 ### Task 10: API 핸들러 + 배포
 
 **Files:**
-- Create: `src/nanjung/handlers/chat.py`, `src/nanjung/handlers/diary.py`
-- Modify: `template.yaml` (`ChatFunction`, `DiaryFunction`, `HttpApi`, `UsageTable`(PK `pk`, TTL `expires_at`))
-- Test: `tests/test_handlers.py`
+- Create: `src/nanjung/handlers/api.py`(진입점), `src/nanjung/handlers/chat.py`, `src/nanjung/handlers/diary.py`
+- Modify: `template.yaml` (`ApiFunction` 하나에 HttpApi 이벤트 `POST /chat`·`GET /diary`, `HttpApi`, `UsageTable`(PK `pk`, TTL `expires_at`))
+- Test: `tests/test_handlers.py`, `tests/test_api.py`
+
+> 변경(사용자 결정, `docs/architecture.png` 기준): 플랜 초안의 `ChatFunction`·`DiaryFunction` 두 개 대신 API Lambda 하나(`ApiFunction`)가 두 경로를 처리한다. `api.lambda_handler`가 `event["routeKey"]`(`"POST /chat"`, `"GET /diary"`)로 분기하고, 알 수 없는 경로는 404다. 환경변수와 IAM 권한은 두 함수의 것을 합친다. HTTP 계약은 그대로다.
 
 **Interfaces:**
 - Consumes: Task 5·7·8·9
@@ -513,12 +518,15 @@ def test_clients_are_independent(table): ...
   4. `embed(message)`
   5. `search(k=5, date_ids)`: 날짜 결과가 비면 date_ids 없이 다시 검색
   6. `decide_mode` → `answer`
-- 환경변수: `SIM_THRESHOLD`(초기값 `0.30`), `DAILY_LIMIT=20`, `TODAY_TABLE`, `USAGE_TABLE`, DB 관련
+- 환경변수: `SIM_THRESHOLD`(초기값 `0.30` → Task 13 평가로 `0.22` 확정), `DAILY_LIMIT=20`, `TODAY_TABLE`, `USAGE_TABLE`, DB 관련
 - HttpApi CORS: `AllowOrigins: ["http://localhost:5500"]`, `AllowHeaders: ["content-type","x-client-id"]`
 
 - [ ] **Step 1: 실패하는 테스트 작성** (의존성은 모두 가짜)
 
 ```python
+def test_post_chat_goes_to_chat(): ...       # api.lambda_handler 라우팅
+def test_get_diary_goes_to_diary(): ...
+def test_unknown_route_is_404(): ...
 def test_chat_400_on_empty_and_long(): ...
 def test_chat_429_when_quota_denied(): assert body["answer"].startswith("오늘은 그만 쉬어야겠소")
 def test_chat_503_on_bedrock_unavailable(): # embed가 BedrockUnavailable → 503, 고정 문구
@@ -535,7 +543,9 @@ def test_diary_defaults_to_kst_today(): # now=2026-12-01T00:30+09:00 → md "12-
 
 ---
 
-### Task 11: 프론트엔드
+### Task 11: 프론트엔드 — **frontend 플랜으로 대체** (`docs/plans/2026-11-24-nanjung-talk-frontend.md`)
+
+> 이 Task는 사용자가 승인한 frontend 플랜으로 대체되었다. 아래 내용은 기록용이며 실행하지 않는다.
 
 **Files:**
 - Create: `web/index.html`, `web/app.js`, `web/style.css`, `web/config.js`(`window.API_BASE = ""`; 로컬에서는 API Gateway URL)
@@ -551,7 +561,7 @@ def test_diary_defaults_to_kst_today(): # now=2026-12-01T00:30+09:00 → md "12-
 - 대화 영역
   - 답변 아래 출처 카드(최대 3개, 가로 배치). `out_of_scope`·`modern`이면 카드 대신 suggestions 버튼
   - 요청 중에는 전송 버튼을 비활성화한다
-- 상태: `history`는 메모리 배열(최근 6턴), `lastSourceIds`는 직전 응답의 `sources[].id`
+- 상태: `history`는 메모리 배열(최근 메시지 6개), `lastSourceIds`는 직전 응답의 `sources[].id`
 - `X-Client-Id`는 `localStorage`에 UUID로 저장한다. 실패하면 메모리 UUID를 쓴다(`try/catch`).
 - 모든 텍스트는 `textContent`로만 넣는다.
 
@@ -599,6 +609,6 @@ def test_diary_defaults_to_kst_today(): # now=2026-12-01T00:30+09:00 → md "12-
 - [ ] **Step 4: 운영 확인**
   - CloudWatch Logs에 오류가 없는지
   - Budgets 알림이 켜져 있는지
-  - RDS 자동 백업이 켜져 있는지
+  - RDS 자동 백업이 켜져 있는지(1일, 무료 플랜 제한, 복구는 S3 processed에서 다시 적재)
   - 21번째 질문에 429 문구가 뜨는지
 - [ ] **Step 5: Commit** `chore: 유사도 기준값 확정과 평가셋`

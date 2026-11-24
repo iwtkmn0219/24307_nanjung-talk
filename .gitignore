@@ -1,0 +1,8 @@
+data/
+.aws-sam/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.superpowers/
+src/nanjung/rds-global-bundle.pem

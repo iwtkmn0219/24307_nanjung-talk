@@ -1,0 +1,160 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: 난중톡(亂中Talk) MVP
+
+Parameters:
+  DbHost:
+    Type: String
+  DbName:
+    Type: String
+    Default: nanjung
+  DbUser:
+    Type: String
+    Description: MVP는 RDS 마스터 사용자(init_schema가 CREATE EXTENSION vector를 실행함)
+  DbPassword:
+    Type: String
+    NoEcho: true
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+  LambdaSgId:
+    Type: AWS::EC2::SecurityGroup::Id
+  DataBucket:
+    Type: String
+  SimThreshold:
+    Type: String
+    Default: "0.22"
+  DailyLimit:
+    Type: Number
+    Default: 20
+  AllowedOrigin:
+    Type: String
+    Default: http://localhost:5500
+  IngestReservedConcurrency:
+    Type: Number
+    Default: 0
+    Description: 0이면 예약하지 않는다(동시성 한도 10인 신규 계정 기본값). 한도가 충분할 때만 2 등으로 올린다.
+
+Conditions:
+  ReserveIngest: !Not [!Equals [!Ref IngestReservedConcurrency, 0]]
+
+Globals:
+  Function:
+    Runtime: python3.12
+    CodeUri: src/
+    Architectures: [x86_64]
+    VpcConfig:
+      SubnetIds: !Ref SubnetIds
+      SecurityGroupIds: [!Ref LambdaSgId]
+    Environment:
+      Variables:
+        DB_HOST: !Ref DbHost
+        DB_NAME: !Ref DbName
+        DB_USER: !Ref DbUser
+        DB_PASSWORD: !Ref DbPassword
+        DB_SSL_CA: /var/task/nanjung/rds-global-bundle.pem
+
+Resources:
+  TodayMapTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: md
+          AttributeType: S
+      KeySchema:
+        - AttributeName: md
+          KeyType: HASH
+
+  IngestFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: nanjung.handlers.ingest.lambda_handler
+      MemorySize: 512
+      Timeout: 900
+      ReservedConcurrentExecutions: !If [ReserveIngest, !Ref IngestReservedConcurrency, !Ref AWS::NoValue]
+      Environment:
+        Variables:
+          DATA_BUCKET: !Ref DataBucket
+          TODAY_TABLE: !Ref TodayMapTable
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource:
+                - arn:aws:bedrock:*::foundation-model/*
+                - !Sub arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*
+        - S3CrudPolicy:
+            BucketName: !Ref DataBucket
+        - DynamoDBWritePolicy:
+            TableName: !Ref TodayMapTable
+
+  UsageTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowOrigins: [!Ref AllowedOrigin]
+        AllowMethods: [GET, POST, OPTIONS]
+        AllowHeaders: [content-type, x-client-id]
+        MaxAge: 600
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 20
+        ThrottlingRateLimit: 10
+
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: nanjung.handlers.api.lambda_handler
+      MemorySize: 512
+      Timeout: 29
+      Environment:
+        Variables:
+          SIM_THRESHOLD: !Ref SimThreshold
+          DAILY_LIMIT: !Ref DailyLimit
+          TODAY_TABLE: !Ref TodayMapTable
+          USAGE_TABLE: !Ref UsageTable
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource:
+                - arn:aws:bedrock:*::foundation-model/*
+                - !Sub arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UsageTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref TodayMapTable
+      Events:
+        Chat:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /chat
+            Method: POST
+        Diary:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /diary
+            Method: GET
+
+Outputs:
+  ApiUrl:
+    Value: !Sub https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com
+  IngestFunctionName:
+    Value: !Ref IngestFunction
+  TodayMapTableName:
+    Value: !Ref TodayMapTable
