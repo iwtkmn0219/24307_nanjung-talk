@@ -83,4 +83,75 @@ def test_eval_chat_summarize_counts_blocked_in_and_passed_out():
             {"q": "c", "expect": "out", "mode": "out_of_scope"}, {"q": "d", "expect": "out", "mode": "normal"},
             {"q": "e", "expect": "out", "mode": "modern"}]
     s = summarize(rows)
-    assert s == {"in_total": 2, "in_blocked": ["b"], "out_total": 3, "out_passed": ["d"], "accuracy": 0.6}
+    assert s == {"in_total": 2, "in_blocked": ["b"], "out_total": 3, "out_passed": ["d"], "errors": [], "accuracy": 0.6}
+
+
+def test_eval_chat_summarize_reports_503_errors_separately_and_excludes_them_from_accuracy():
+    import sys
+    sys.path.insert(0, "scripts")
+    from eval_chat import summarize
+    rows = [{"q": "a", "expect": "in", "mode": "normal"}, {"q": "b", "expect": "in", "mode": "error"},
+            {"q": "c", "expect": "out", "mode": "out_of_scope"}]
+    s = summarize(rows)
+    assert s["errors"] == ["b"] and s["in_blocked"] == [] and s["out_passed"] == [] and s["accuracy"] == 1.0
+
+
+def test_eval_chat_run_records_transport_errors_and_continues(monkeypatch):
+    import sys
+    import urllib.error
+    sys.path.insert(0, "scripts")
+    import eval_chat
+    calls = []
+
+    def fake_ask(api, q):
+        calls.append(q)
+        if len(calls) == 1:
+            raise urllib.error.URLError("connection reset")
+        if len(calls) == 2:
+            raise TimeoutError("timed out")
+        return {"mode": "normal", "sources": [], "answer": "a"}
+    monkeypatch.setattr(eval_chat, "ask", fake_ask)
+    rows = eval_chat.run("http://x")
+    assert len(rows) == 40 and rows[0]["mode"] == "error" and rows[1]["mode"] == "error" and rows[2]["mode"] == "normal"
+    assert "connection reset" in rows[0]["answer"]
+
+
+def test_behavior_check_detects_internal_phrases_and_paraphrases():
+    import sys
+    sys.path.insert(0, "scripts")
+    from behavior_check import internal_phrases
+    assert internal_phrases("그날 나는 맑았소.") == []
+    for bad in ["주어진 일기에는 없소", "제시된 기록을 보면", "[일기]에 따르면", "질문이 가리키는 날은", "제가 받은 기록에는",
+                "근거로 받은 일기를 보면", "검색된 일기 중", "선정한 일기에서는", "받은 자료에는"]:
+        assert internal_phrases(bad), bad
+    assert internal_phrases("내 일기에는 적지 않았소. 내가 받은 상처는 깊었소.") == []   # '받은 상처'는 정상
+
+
+def test_behavior_check_flags_evidence_date_lists():
+    import sys
+    sys.path.insert(0, "scripts")
+    from behavior_check import date_list
+    assert date_list("정유년 7월 25일, 갑오년 4월 24일, 정유년 6월 15일의 기록이 있소.") is True
+    assert date_list("그날은 4월 13일이었소. 7월 3일에도 비슷했소.") is False       # 두 날짜는 정상
+    assert date_list("맑았소.") is False
+
+
+def test_date_list_counts_the_same_date_written_differently_once():
+    import sys
+    sys.path.insert(0, "scripts")
+    from behavior_check import date_list
+    assert date_list("4월 1일, 4월01일, 4월  1일의 일이오.") is False        # 같은 날짜 표기 흔들림
+    assert date_list("4월 1일, 4월 2일, 04월 03일에 있었소.") is True
+
+
+def test_behavior_check_render_shows_date_list_per_row_and_in_summary():
+    import sys
+    sys.path.insert(0, "scripts")
+    from behavior_check import render
+    rows = [{"q": "a", "why": "w", "mode": "normal", "src": [], "internal": [], "date_list": True, "emoji": 0,
+             "serious_ok": True, "answer": "4월 1일, 4월 2일, 4월 3일"},
+            {"q": "b", "why": "w", "mode": "normal", "src": [], "internal": ["주어진"], "date_list": False, "emoji": 0,
+             "serious_ok": True, "answer": "주어진 일기"}]
+    out = render(rows)
+    assert "날짜나열=True" in out and "날짜나열=False" in out
+    assert "내부 표현이 나온 답변: 1 / 2" in out and "날짜 3개 이상 나열: 1" in out

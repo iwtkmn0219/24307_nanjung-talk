@@ -408,3 +408,33 @@ def test_empty_date_result_falls_back_without_focus(env):
     _, rec = env(FakeDB({None: [Hit(entry(), 0.9)]}))
     call(ev(body("정유년 9월 16일 일기")))
     assert rec.focus == [None]
+
+
+def test_503_logs_the_cause(env, caplog):
+    import logging
+    env(embed_exc=BedrockUnavailable("ThrottlingException: Too many requests"))
+    with caplog.at_level(logging.WARNING, logger="nanjung.handlers.chat"):
+        assert call(ev(body()))[0] == 503
+    assert any("ThrottlingException" in r.getMessage() or "ThrottlingException" in str(r.exc_info) for r in caplog.records)
+
+
+def test_time_budget_503_is_logged_as_budget_not_bedrock(env, caplog):
+    import logging
+    env()
+    with caplog.at_level(logging.WARNING, logger="nanjung.handlers.chat"):
+        r = chat.lambda_handler(ev(body()), Ctx(100))      # 남은 시간이 거의 없음 → quota 전에 503
+    assert r["statusCode"] == 503
+    text = " ".join(rec.getMessage() for rec in caplog.records)
+    assert "시간 예산" in text and "Bedrock" not in text
+
+
+def test_time_budget_after_quota_is_logged_as_budget(env, caplog, monkeypatch):
+    import logging
+    env()
+    clock = [0.0]
+    monkeypatch.setattr(chat, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(chat, "get_conn", lambda: (clock.__setitem__(0, 30.0), object())[1])  # DB 연결에 30초 소요
+    with caplog.at_level(logging.WARNING, logger="nanjung.handlers.chat"):
+        assert call(ev(body()))[0] == 503
+    text = " ".join(rec.getMessage() for rec in caplog.records)
+    assert "시간 예산" in text and "Bedrock 일시 장애" not in text
