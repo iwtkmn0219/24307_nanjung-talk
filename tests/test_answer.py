@@ -384,3 +384,30 @@ def test_focus_note_separates_found_day_from_missing_detail():
     answer("정유년 9월 16일 점심은?", [h], [], "normal", client=c, focus_ids=[h.entry.id])
     s = system_of(c)
     assert "세부" in s and "그날 있었던 일" in s and "적지 않았" in s
+
+
+# ---- 모르는 질문도 장군답게: 관련해 남은 일을 먼저, 세부는 없다고 덧붙이기, 같은 말 반복 금지 ----
+def test_prompt_leads_with_related_diary_content_instead_of_a_fixed_opener():
+    c = FakeClient()
+    answer("배 멀미 하셨어요?", [hit(0.5)], [], "normal", client=c)
+    s = system_of(c)
+    assert "고정 문구처럼 맨 앞에" in s                       # '일기에 적지 않아 모르겠소.'를 맨 앞에 두지 않는다
+    assert "먼저" in s and "실제로 남은 일" in s                # 관련해 일기에 실제로 남은 일을 먼저
+    assert "그다음" in s or "덧붙" in s                          # 묻는 세부가 기록에 없다는 말은 간단히 뒤에
+    assert "한 줄" in s and "솔직" in s                          # 정말 말할 근거가 없으면 한 줄로
+
+
+def test_prompt_varies_the_unrecorded_phrase_and_forbids_repeating_in_one_answer():
+    c = FakeClient()
+    answer("x", [hit(0.5)], [], "normal", client=c)
+    s = system_of(c)
+    assert "매번 다르게" in s and "두 번" in s                   # 표현은 매번 바꾸고 같은 내용을 한 답변에서 두 번 하지 않는다
+    assert "일기에 적지 않아" in s                               # 기존 표현은 예시로 남는다
+
+
+def test_prior_rules_are_kept_with_the_new_tone_rule():
+    c = FakeClient()
+    answer("x", [hit(0.5)], [], "serious", client=c)
+    s = system_of(c)
+    for kept in ["3문장 이내", "지어내", "직접 모순", "이모지", "하오체", "처음 듣는 말이라 내 답할 길이 없소."]:
+        assert kept in s, kept
