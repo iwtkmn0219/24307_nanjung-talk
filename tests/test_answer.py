@@ -137,7 +137,7 @@ def msgs(n):
     return [{"role": "user" if i % 2 == 0 else "assistant", "content": f"m{i}"} for i in range(n)]
 
 
-def test_history_truncated_to_6_turns(fake_client):
+def test_history_truncated_to_6_messages(fake_client):
     answer("새 질문", [hit(0.5)], msgs(10), "normal", client=fake_client)
     sent = fake_client.kwargs[0]["messages"]
     assert [m["content"][0]["text"] for m in sent] == ["m4", "m5", "m6", "m7", "m8", "m9", "새 질문"]

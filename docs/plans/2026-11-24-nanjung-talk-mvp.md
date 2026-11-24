@@ -430,7 +430,7 @@ def test_plain_question(): assert r("배 멀미 하셨어요?") is None
 
 응답 결정:
 - `out_of_scope`·`modern`은 **LLM을 호출하지 않는다.** 답변은 각각 `처음 듣는 말이라 내 답할 길이 없소.`, `후대의 일은 모르오.` 고정이다. 이어서 `"대신 내 일기 이야기를 들려주리다."`를 붙인다. `sources`는 빈 목록, `suggestions`는 최상위 hit의 `questions`다.
-- `normal`·`serious`는 상위 3개 근거의 원문·번역과 history(최근 6턴)를 넣어 converse를 호출한다(`max_tokens=400`, `temperature=0.6`). 카드는 최대 3개다.
+- `normal`·`serious`는 상위 3개 근거의 원문·번역과 history(최근 메시지 6개 = 질문·답변 3쌍. frontend 플랜과 같은 기준)를 넣어 converse를 호출한다(`max_tokens=400`, `temperature=0.6`). 카드는 최대 3개다.
 - 시스템 프롬프트 필수 지시:
   - 주어진 일기 내용에만 근거할 것
   - 없는 사실은 지어내지 말 것
@@ -542,7 +542,9 @@ def test_diary_defaults_to_kst_today(): # now=2026-12-01T00:30+09:00 → md "12-
 
 ---
 
-### Task 11: 프론트엔드
+### Task 11: 프론트엔드 — **frontend 플랜으로 대체** (`docs/plans/2026-11-24-nanjung-talk-frontend.md`)
+
+> 이 Task는 사용자가 승인한 frontend 플랜으로 대체되었다. 아래 내용은 기록용이며 실행하지 않는다.
 
 **Files:**
 - Create: `web/index.html`, `web/app.js`, `web/style.css`, `web/config.js`(`window.API_BASE = ""`; 로컬에서는 API Gateway URL)
@@ -558,7 +560,7 @@ def test_diary_defaults_to_kst_today(): # now=2026-12-01T00:30+09:00 → md "12-
 - 대화 영역
   - 답변 아래 출처 카드(최대 3개, 가로 배치). `out_of_scope`·`modern`이면 카드 대신 suggestions 버튼
   - 요청 중에는 전송 버튼을 비활성화한다
-- 상태: `history`는 메모리 배열(최근 6턴), `lastSourceIds`는 직전 응답의 `sources[].id`
+- 상태: `history`는 메모리 배열(최근 메시지 6개), `lastSourceIds`는 직전 응답의 `sources[].id`
 - `X-Client-Id`는 `localStorage`에 UUID로 저장한다. 실패하면 메모리 UUID를 쓴다(`try/catch`).
 - 모든 텍스트는 `textContent`로만 넣는다.
 
