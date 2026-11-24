@@ -4,7 +4,7 @@
 
 **Goal:** 난중일기 원문(이충무공전서본)에만 근거해 1인칭 하오체로 답하는 이순신 챗봇 웹 서비스를 3주 안에 AWS에 배포한다.
 
-**Architecture:** 로컬 PC 스크립트가 한국고전종합DB에서 월 단위 원문 HTML 61개를 받아 S3 `raw/`에 올린다. VPC 안의 적재 Lambda가 이를 일기 하루 단위로 나누고, 날짜를 변환하고, Bedrock으로 번역·태깅·임베딩한 뒤 RDS(pgvector)와 DynamoDB에 넣는다. 사용자 요청은 CloudFront → API Gateway(HTTP API) → 대화/일기 Lambda → RDS·Bedrock 순서로 흐른다. 기획서의 "긴 날은 문단 단위로 추가 분할"은 하지 않는다. 가장 긴 하루가 원문 610자라서 하루 = 검색 단위 하나로 충분하다.
+**Architecture:** 로컬 PC 스크립트가 한국고전종합DB에서 월 단위 원문 HTML 61개를 받아 S3 `raw/`에 올린다. VPC 안의 적재 Lambda가 이를 일기 하루 단위로 나누고, 날짜를 변환하고, Bedrock으로 번역·태깅·임베딩한 뒤 RDS(pgvector)와 DynamoDB에 넣는다. 사용자 요청은 CloudFront → API Gateway(HTTP API) → API Lambda 하나(`/chat`·`/diary`) → RDS·Bedrock 순서로 흐른다(기준 구조도: `docs/architecture.png`). 기획서의 "긴 날은 문단 단위로 추가 분할"은 하지 않는다. 가장 긴 하루가 원문 610자라서 하루 = 검색 단위 하나로 충분하다.
 
 **Tech Stack:** Python 3.12 (Lambda), AWS SAM, pg8000, beautifulsoup4, korean-lunar-calendar, boto3, pytest + moto, 바닐라 HTML/JS
 
@@ -57,7 +57,9 @@ nanjungtalk/
       date_resolver.py      # 질문 속 날짜·사건·"다음 날" 해석
       answer.py             # 답변 모드 결정, 프롬프트, 출처 카드
       quota.py              # DynamoDB 사용량 제한
-      handlers/ingest.py chat.py diary.py
+      handlers/ingest.py    # 적재 Lambda
+      handlers/api.py       # API Lambda 진입점(routeKey로 /chat, /diary 분기)
+      handlers/chat.py diary.py common.py
   scripts/collect.py        # 로컬 PC 전용 수집기
   scripts/ingest_all.sh     # 적재 Lambda 일괄 호출
   sql/schema.sql
@@ -490,9 +492,11 @@ def test_clients_are_independent(table): ...
 ### Task 10: API 핸들러 + 배포
 
 **Files:**
-- Create: `src/nanjung/handlers/chat.py`, `src/nanjung/handlers/diary.py`
-- Modify: `template.yaml` (`ChatFunction`, `DiaryFunction`, `HttpApi`, `UsageTable`(PK `pk`, TTL `expires_at`))
-- Test: `tests/test_handlers.py`
+- Create: `src/nanjung/handlers/api.py`(진입점), `src/nanjung/handlers/chat.py`, `src/nanjung/handlers/diary.py`
+- Modify: `template.yaml` (`ApiFunction` 하나에 HttpApi 이벤트 `POST /chat`·`GET /diary`, `HttpApi`, `UsageTable`(PK `pk`, TTL `expires_at`))
+- Test: `tests/test_handlers.py`, `tests/test_api.py`
+
+> 변경(사용자 결정, `docs/architecture.png` 기준): 플랜 초안의 `ChatFunction`·`DiaryFunction` 두 개 대신 API Lambda 하나(`ApiFunction`)가 두 경로를 처리한다. `api.lambda_handler`가 `event["routeKey"]`(`"POST /chat"`, `"GET /diary"`)로 분기하고, 알 수 없는 경로는 404다. 환경변수와 IAM 권한은 두 함수의 것을 합친다. HTTP 계약은 그대로다.
 
 **Interfaces:**
 - Consumes: Task 5·7·8·9
@@ -519,6 +523,9 @@ def test_clients_are_independent(table): ...
 - [ ] **Step 1: 실패하는 테스트 작성** (의존성은 모두 가짜)
 
 ```python
+def test_post_chat_goes_to_chat(): ...       # api.lambda_handler 라우팅
+def test_get_diary_goes_to_diary(): ...
+def test_unknown_route_is_404(): ...
 def test_chat_400_on_empty_and_long(): ...
 def test_chat_429_when_quota_denied(): assert body["answer"].startswith("오늘은 그만 쉬어야겠소")
 def test_chat_503_on_bedrock_unavailable(): # embed가 BedrockUnavailable → 503, 고정 문구

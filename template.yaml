@@ -107,10 +107,10 @@ Resources:
         ThrottlingBurstLimit: 20
         ThrottlingRateLimit: 10
 
-  ChatFunction:
+  ApiFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Handler: nanjung.handlers.chat.lambda_handler
+      Handler: nanjung.handlers.api.lambda_handler
       MemorySize: 512
       Timeout: 29
       Environment:
@@ -128,6 +128,8 @@ Resources:
                 - !Sub arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*
         - DynamoDBCrudPolicy:
             TableName: !Ref UsageTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref TodayMapTable
       Events:
         Chat:
           Type: HttpApi
@@ -135,20 +137,6 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /chat
             Method: POST
-
-  DiaryFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      Handler: nanjung.handlers.diary.lambda_handler
-      MemorySize: 256
-      Timeout: 10
-      Environment:
-        Variables:
-          TODAY_TABLE: !Ref TodayMapTable
-      Policies:
-        - DynamoDBReadPolicy:
-            TableName: !Ref TodayMapTable
-      Events:
         Diary:
           Type: HttpApi
           Properties:
