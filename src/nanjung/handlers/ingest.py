@@ -143,10 +143,12 @@ def _validate_processed(data) -> None:
 def _reclassify(key: str) -> dict:
     """processed JSON의 '비통' 항목만 감정을 다시 분류한다(번역·임베딩은 그대로).
 
-    확정 순서: (1) 모델 판정을 S3 processed JSON에 먼저 저장 — 이것이 기준이다.
-    (2) DB는 JSON의 최종 값에 맞추는 멱등 동기화. (2)가 실패해도 다시 실행하면 JSON 값으로 DB가 맞춰지고,
-    이미 확정된 항목은 모델에 다시 묻지 않는다. 같은 월에 ingest/reclassify를 동시에 돌리면 서로 덮을 수
-    있으므로 운영 스크립트는 순차로만 호출한다.
+    S3 processed JSON이 기준이고 DB는 그것에 맞추는 멱등 동기화다.
+    (0) 먼저 기존 JSON 값으로 DB를 맞춘다 — 이전 실행이 S3에 확정만 하고 DB에 못 간 값을 새 모델 호출
+        (실패할 수 있다)보다 먼저 복구한다.
+    (1) 비통 항목을 다시 분류한다. 도중에 실패하면 거기까지의 판정을 S3에 저장하고 DB에도 맞춘 뒤 예외를 다시 던진다.
+    (2) 새 판정은 S3에 먼저 저장하고, 그다음 DB를 맞춘다.
+    같은 월에 ingest/reclassify를 동시에 돌리면 서로 덮을 수 있으므로 운영 스크립트는 순차로만 호출한다.
     """
     s3 = s3_client()
     index = {r["data_id"] for r in json.loads(_read(s3, "raw/index.json") or "[]")}
@@ -158,23 +160,38 @@ def _reclassify(key: str) -> dict:
         raise ValueError(f"S3에 없음: {key}")
     data = json.loads(raw)
     _validate_processed(data)
+    conn = get_conn()
 
-    changed, checked = [], 0
-    for d in data:
-        if d["emotion"] != "비통":
-            continue
-        checked += 1
-        new = reclassify(d["original"], d["translation"])
-        if new != d["emotion"]:
-            changed.append({"id": d["id"], "from": d["emotion"], "to": new})
-            d["emotion"] = new
-    if changed:
+    def sync() -> dict:
+        return db.sync_emotions(conn, [(d["id"], d["original"], d["translation"], d["emotion"]) for d in data])
+
+    def save() -> None:
         s3.put_object(Bucket=os.environ["DATA_BUCKET"], Key=key,
                       Body=json.dumps(data, ensure_ascii=False, indent=1).encode("utf-8"),
                       ContentType="application/json")
-    sync = db.sync_emotions(get_conn(), [(d["id"], d["original"], d["emotion"]) for d in data])
-    return {"checked": checked, "changed": changed, "db_updated": sync["updated"],
-            "db_missing": sync["missing"], "db_stale": sync["stale"]}
+
+    result = first = sync()
+    changed, checked = [], 0
+    try:
+        for d in data:
+            if d["emotion"] != "비통":
+                continue
+            checked += 1
+            new = reclassify(d["original"], d["translation"])
+            if new != d["emotion"]:
+                changed.append({"id": d["id"], "from": d["emotion"], "to": new})
+                d["emotion"] = new
+    except Exception:
+        if changed:
+            save()
+            sync()
+        raise
+    if changed:
+        save()
+        result = sync()
+        result = {**result, "updated": list(dict.fromkeys(first["updated"] + result["updated"]))}
+    return {"checked": checked, "changed": changed, "db_updated": result["updated"],
+            "db_missing": result["missing"], "db_stale": result["stale"]}
 
 
 def lambda_handler(event, context):

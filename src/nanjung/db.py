@@ -106,25 +106,26 @@ def stats(conn) -> dict:
     return {"count": count, "emotions": emotions, "pig_in_son_entries": pig}
 
 
-def sync_emotions(conn, items: list[tuple[str, str, str]]) -> dict:
-    """items=(id, original, emotion). DB의 감정을 주어진 값에 맞춘다(번역이 그대로라 임베딩은 건드리지 않는다).
+def sync_emotions(conn, items: list[tuple[str, str, str, str]]) -> dict:
+    """items=(id, original, translation, emotion). DB의 감정을 주어진 값에 맞춘다(임베딩은 건드리지 않는다).
 
-    멱등이다: 이미 같은 행은 건드리지 않는다. DB에 없는 행(missing)과 원문이 달라 낡은 행(stale)은
-    갱신하지 않고 따로 돌려준다.
+    멱등이다: 이미 같은 행은 건드리지 않는다. DB에 없는 행(missing)과 원문 또는 번역이 달라 낡은 행(stale)은
+    갱신하지 않고 따로 돌려준다(번역이 다르면 임베딩도 옛 번역 기준이므로 감정만 맞추면 안 된다).
     """
     out: dict = {"updated": [], "missing": [], "stale": []}
     if not items:
         return out
-    rows = {r[0]: (r[1], r[2]) for r in conn.run(
-        "SELECT id, original, emotion FROM diary WHERE id = ANY(:ids)", ids=[i for i, _, _ in items])}
-    for entry_id, original, emotion in items:
+    rows = {r[0]: (r[1], r[2], r[3]) for r in conn.run(
+        "SELECT id, original, translation, emotion FROM diary WHERE id = ANY(:ids)", ids=[i[0] for i in items])}
+    for entry_id, original, translation, emotion in items:
         cur = rows.get(entry_id)
         if cur is None:
             out["missing"].append(entry_id)
-        elif cur[0] != original:
+        elif cur[0] != original or cur[1] != translation:
             out["stale"].append(entry_id)
-        elif cur[1] != emotion:
-            hit = conn.run("UPDATE diary SET emotion = :emotion WHERE id = :id AND original = :original RETURNING id",
-                           id=entry_id, original=original, emotion=emotion)
+        elif cur[2] != emotion:
+            hit = conn.run("UPDATE diary SET emotion = :emotion WHERE id = :id AND original = :original "
+                           "AND translation = :translation RETURNING id",
+                           id=entry_id, original=original, translation=translation, emotion=emotion)
             (out["updated"] if hit else out["missing"]).append(entry_id)
     return out
