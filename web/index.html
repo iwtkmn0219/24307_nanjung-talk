@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>난중톡 — 亂中Talk</title>
+  <link rel="stylesheet" href="fonts/fonts.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app" class="app">
+    <header class="app-header">
+      <div class="col header-row">
+        <h1 class="logo">亂中Talk<span class="logo-sub">난중톡</span></h1>
+        <div class="seal seal-header" aria-hidden="true">日<br>記</div>
+      </div>
+    </header>
+    <main id="log" class="log" role="log" aria-live="polite"></main>
+    <form id="composer" class="composer" autocomplete="off">
+      <div class="col">
+        <div class="composer-row">
+          <input id="q" class="q" type="text" maxlength="300" placeholder="장군께 여쭐 말을 적으시오" aria-label="질문 입력" enterkeyhint="send">
+          <button id="send" class="send" type="submit" aria-label="보내기" disabled>
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+          </button>
+        </div>
+        <div id="counter" class="counter" aria-live="polite"></div>
+      </div>
+    </form>
+  </div>
+  <script src="config.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
