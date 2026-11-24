@@ -125,3 +125,12 @@ def test_behavior_check_detects_internal_phrases_and_paraphrases():
                 "근거로 받은 일기를 보면", "검색된 일기 중", "선정한 일기에서는", "받은 자료에는"]:
         assert internal_phrases(bad), bad
     assert internal_phrases("내 일기에는 적지 않았소. 내가 받은 상처는 깊었소.") == []   # '받은 상처'는 정상
+
+
+def test_behavior_check_flags_evidence_date_lists():
+    import sys
+    sys.path.insert(0, "scripts")
+    from behavior_check import date_list
+    assert date_list("정유년 7월 25일, 갑오년 4월 24일, 정유년 6월 15일의 기록이 있소.") is True
+    assert date_list("그날은 4월 13일이었소. 7월 3일에도 비슷했소.") is False       # 두 날짜는 정상
+    assert date_list("맑았소.") is False

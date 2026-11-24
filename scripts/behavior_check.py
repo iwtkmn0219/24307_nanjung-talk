@@ -31,8 +31,16 @@ CASES = [  # (질문, 점검 이유, serious 여부)
 ]
 
 
+DATE_RE = re.compile(r"\d{1,2}월\s*\d{1,2}일")
+
+
 def internal_phrases(text: str) -> list[str]:
     return [m.group(0) for m in INTERNAL.finditer(text)]
+
+
+def date_list(text: str) -> bool:
+    """근거로 쓴 일기의 날짜를 세 개 이상 줄줄이 나열했는가(두 개까지는 정상)."""
+    return len(set(DATE_RE.findall(text))) >= 3
 
 
 def run(api: str) -> list[dict]:
@@ -40,7 +48,7 @@ def run(api: str) -> list[dict]:
     for q, why, serious in CASES:
         d = ask(api, q)
         rows.append({"q": q, "why": why, "mode": d["mode"], "src": [s["id"] for s in d["sources"]],
-                     "internal": internal_phrases(d["answer"]), "emoji": len(EMOJI.findall(d["answer"])),
+                     "internal": internal_phrases(d["answer"]), "date_list": date_list(d["answer"]), "emoji": len(EMOJI.findall(d["answer"])),
                      "serious_ok": (not serious) or (d["mode"] == "serious" and not EMOJI.search(d["answer"])),
                      "answer": d["answer"]})
     return rows
