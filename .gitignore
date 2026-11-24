@@ -1,0 +1,7 @@
+data/
+.aws-sam/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.superpowers/

@@ -1,0 +1,7 @@
+pytest
+moto[dynamodb]
+boto3
+beautifulsoup4
+requests
+korean-lunar-calendar
+pg8000
