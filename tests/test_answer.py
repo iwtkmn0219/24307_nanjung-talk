@@ -121,16 +121,60 @@ def test_normal_answer_uses_top3_and_cards(fake_client):
     assert r["suggestions"] == hs[0].entry.questions
 
 
-def test_source_card_lines():
+def card(original, translation):
+    c = source_card(hit(0.5, original=original, translation=translation))
+    return c["original_line"], c["translation_line"]
+
+
+def test_source_card_skips_header_and_weather_and_shows_the_content_sentence():
     h = hit(0.5, original="十三日壬寅。晴。出東軒公事。")
     c = source_card(h)
-    assert c == {"id": h.entry.id, "label": h.entry.label, "original_line": "十三日壬寅。",
-                 "translation_line": "13일 임인.", "note": SOURCE_NOTE}
+    # 사용자 결정: 날짜·간지 머리 문장과 날씨 문장을 건너뛰고 내용 문장을 보여 준다(이전 계약: 첫 문장 '十三日壬寅。')
+    assert c == {"id": h.entry.id, "label": h.entry.label, "original_line": "出東軒公事。",
+                 "translation_line": "동헌에 나가 공무를 보았다.", "note": SOURCE_NOTE}
 
 
-def test_source_card_original_line_capped_at_60():
-    c = source_card(hit(0.5, original="甲" * 100 + "。"))
+def test_source_card_original_joins_short_sentences_until_enough_content():
+    assert card("十七日乙巳。陰。曉。右水使來見。", "17일 을사. 흐림. 새벽. 우수사가 와서 보았다.") ==         ("曉。右水使來見。", "새벽. 우수사가 와서 보았다.")
+    # 내용 문장이 충분히 길면 하나만
+    assert card("初一日辛酉。晴。得出圓門。到南門外尹生侃奴家。則菶芬同坐。", "초하루 신유일. 맑다. 옥문을 나오게 되어 남문 밖 윤생 간의 종의 집에 도착했다.")[0]         == "得出圓門。到南門外尹生侃奴家。"
+
+
+def test_source_card_translation_headers_and_weather_forms():
+    cases = [
+        ("17일 을사. 맑음. 동헌에 나가 공무를 보았다. 활 열다섯 순을 쏘았다.", "동헌에 나가 공무를 보았다."),
+        ("초하루 신유일. 맑다. 아침에 공무를 보았다. 늦게 돌아왔다.", "아침에 공무를 보았다. 늦게 돌아왔다."),
+        ("초여섯 날 기사. 비가 내렸다. 종일 앉아 있었다.", "종일 앉아 있었다."),
+        ("초이레 병오날. 맑고 따뜻하다. 군사들을 점검하고 활을 쏘았다.", "군사들을 점검하고 활을 쏘았다."),
+        ("13일 임인. 흐렸다. 새벽. 비가 왔다.", "새벽. 비가 왔다."),
+        ("10일. 맑다. 장수들이 와서 의논했다.", "장수들이 와서 의논했다."),
+    ]
+    for tr, want in cases:
+        assert card("十三日壬寅。晴。出東軒公事。", tr)[1] == want, tr
+
+
+def test_source_card_skips_up_to_two_leading_weather_sentences():
+    assert card("十三日壬寅。陰。雨雨終日。坐東軒。處置公事。", "13일 임인. 흐림. 종일 비가 내렸다. 동헌에 앉아 공무를 처리했다.") ==         ("坐東軒。處置公事。", "동헌에 앉아 공무를 처리했다.")
+
+
+def test_source_card_falls_back_to_first_sentence_when_nothing_follows_the_header():
+    assert card("初六日己巳。晴。", "초엿새 기사. 맑다.") == ("初六日己巳。", "초엿새 기사.")
+    assert card("十三日壬寅。", "13일 임인.") == ("十三日壬寅。", "13일 임인.")
+
+
+def test_source_card_keeps_a_first_sentence_that_has_content_inside_the_header():
+    assert card("二十四日干支缺到柚島結陣。晴。", "24일 간지 빠짐. 유도에 도착해 진을 쳤다. 맑다.")[0].startswith("二十四日干支缺到柚島結陣。")
+
+
+def test_source_card_content_is_capped_at_60():
+    c = source_card(hit(0.5, original="十三日壬寅。晴。" + "甲" * 100 + "。"))
     assert len(c["original_line"]) == 60
+    long_tr = "17일 을사. 맑음. " + "가" * 100 + "."
+    assert len(source_card(hit(0.5, translation=long_tr))["translation_line"]) <= 60
+
+
+def test_source_card_weather_sentence_after_content_is_not_dropped():
+    assert card("十三日壬寅。出東軒。晴。", "13일 임인. 동헌에 나갔다. 맑다.") == ("出東軒。晴。", "동헌에 나갔다. 맑다.")
 
 
 def msgs(n):

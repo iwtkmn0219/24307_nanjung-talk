@@ -68,12 +68,63 @@ def _first_sentence(text: str) -> str:
     return m.group(0).strip() if m else text
 
 
+# ---- 출처 카드: 날짜·간지 머리 문장과 날씨 문장을 건너뛰고 내용 문장을 보여 준다 ----
+CARD_MIN_CONTENT = 14      # 내용이 이만큼 모일 때까지 문장을 이어 붙인다(너무 짧은 한 문장으로 끝나지 않게)
+CARD_MAX_WEATHER_SKIP = 2  # 머리 문장 뒤에서 건너뛰는 날씨 문장 수
+HEADER_O_RE = re.compile(r"^[初二三十一]*[一二三四五六七八九十]?日")
+HEADER_K_RE = re.compile(r"^(?:\d{1,2}일|초[가-힣]+(?:\s날)?)")
+GANJI_K_RE = re.compile(r"[갑을병정무기경신임계][자축인묘진사오미신유술해]")
+WEATHER_O = set("晴陰雨雪風霧雷霰曇雲霽")
+WEATHER_K_RE = re.compile(r"맑|흐[리렸림]|비가|눈이|바람|안개|구름|날씨|쌀쌀|따뜻|춥|덥|개었|갰")
+
+
+def _is_header_o(sentence: str) -> bool:
+    body = sentence.rstrip("。")
+    return bool(HEADER_O_RE.match(body)) and len(body) <= 8       # 二十四日干支缺到柚島結陣처럼 내용이 붙은 건 머리가 아니다
+
+
+def _is_header_k(sentence: str) -> bool:
+    return bool(HEADER_K_RE.match(sentence)) and (bool(GANJI_K_RE.search(sentence)) or len(sentence) <= 8)
+
+
+def _is_weather_o(sentence: str) -> bool:
+    return len(sentence) <= 10 and any(c in WEATHER_O for c in sentence)
+
+
+def _is_weather_k(sentence: str) -> bool:
+    return len(sentence) <= 10 and bool(WEATHER_K_RE.search(sentence))
+
+
+def _card_line(sentences: list[str], is_header, is_weather, joiner: str) -> str:
+    """머리 문장과 이어지는 날씨 문장을 건너뛴 내용 문장을 60자 안에서 돌려준다. 남는 문장이 없으면 첫 문장."""
+    if not sentences:
+        return ""
+    rest = sentences[1:] if is_header(sentences[0]) else list(sentences)
+    skipped = 0
+    while rest and skipped < CARD_MAX_WEATHER_SKIP and is_weather(rest[0]):
+        rest.pop(0)
+        skipped += 1
+    if not rest:
+        return sentences[0][:ORIGINAL_LINE_MAX]
+    line = ""
+    for sent in rest:
+        candidate = sent if not line else line + joiner + sent
+        if len(candidate) > ORIGINAL_LINE_MAX:
+            return (line or candidate)[:ORIGINAL_LINE_MAX]
+        line = candidate
+        if len(line) >= CARD_MIN_CONTENT:
+            break
+    return line
+
+
 def source_card(h: Hit) -> dict:
     e = h.entry
-    original = e.original.split("。", 1)
-    original_line = original[0] + ("。" if len(original) > 1 else "")
-    return {"id": e.id, "label": e.label, "original_line": original_line[:ORIGINAL_LINE_MAX],
-            "translation_line": _first_sentence(e.translation), "note": SOURCE_NOTE}
+    original = [x + "。" for x in e.original.split("。") if x.strip()]
+    translation = [x.strip() for x in re.split(r"(?<=[.!?])\s+", e.translation.strip()) if x.strip()]
+    return {"id": e.id, "label": e.label,
+            "original_line": _card_line(original, _is_header_o, _is_weather_o, ""),
+            "translation_line": _card_line(translation, _is_header_k, _is_weather_k, " "),
+            "note": SOURCE_NOTE}
 
 
 FOCUS_NOTE = ("사용자가 묻는 날은 [일기] 중 {labels}의 일기다. 사용자가 말한 '다음 날'·'전날'·날짜는 이미 이 일기를 "

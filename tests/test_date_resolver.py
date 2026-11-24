@@ -183,3 +183,31 @@ def test_followup_without_any_event_still_uses_previous_diary():
 
 def test_explicit_date_still_beats_conflict_and_negation_with_relative_day():
     assert r("유배 말고 정유년 9월 16일 전날은요?", ["1592-06-10"]) == ["1597-09-15"]
+
+
+# ---- 명량 키워드 확장: 울돌목·鳴梁 단독, 12·13척은 싸움 동사와 함께 ----
+@pytest.mark.parametrize("msg", ["울돌목에서 무슨 일이 있었어요?", "鳴梁 이야기를 해 주세요", "울돌목 해전은 어땠소?"])
+def test_ulddolmok_and_myeongnyang_hanja_map_alone(msg):
+    assert r(msg) == ["1597-09-16"]
+
+
+@pytest.mark.parametrize("msg", [
+    "12척의 배로 이긴 것이 사실?", "13척으로 싸우셨나요?",
+    "열두 척으로 승리하셨죠?", "열세 척의 배로 물리치셨다던데요", "12척으로 대첩을 거두셨어요?", "열두척으로 이긴 게 맞아요?",
+    "12 척으로 전투를 치르셨죠?",
+])
+def test_twelve_or_thirteen_ships_with_a_fighting_verb_map(msg):
+    assert r(msg) == ["1597-09-16"]
+
+
+@pytest.mark.parametrize("msg", [
+    "배 12척을 만들었나요?", "열두 척이 있었나요?", "13척의 배는 어디에 있었어요?", "112척으로 이기셨어요?", "열두 척 정도 보셨어요?",
+])
+def test_ship_counts_without_a_fighting_verb_do_not_map(msg):
+    assert r(msg) is None
+
+
+def test_new_myeongnyang_words_work_with_relative_day_and_explicit_date():
+    nb2 = {("1597-09-16", -1): "1597-09-15"}.get
+    assert resolve("울돌목 전날은요?", [], lambda i, d: nb2((i, d))) == ["1597-09-15"]
+    assert r("12척으로 이긴 날 말고 정유년 9월 1일은요?") == ["1597-09-01"]

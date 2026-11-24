@@ -43,9 +43,18 @@ def _prison(m: str) -> bool | None:
     return None
 
 
+# 명량: 지명은 단독으로, '12척·13척'은 싸움 동사와 함께일 때만(배 12척을 만들었나요? 같은 질문이 걸리면 안 된다)
+SHIPS_RE = re.compile(r"(?<!\d)1[23]\s*척|열\s*(?:두|세)\s*척")
+FIGHT_RE = re.compile(r"이기|이긴|이겼|싸|승리|대첩|전투|물리")
+
+
+def _myeongnyang(m: str) -> bool:
+    return "명량" in m or "울돌목" in m or "鳴梁" in m or bool(SHIPS_RE.search(m) and FIGHT_RE.search(m))
+
+
 # (일기 id, 판정 함수 → 일치하면 '상대 표현 기준으로 써도 되는지', 아니면 None)
 EVENTS: list[tuple[str, Callable[[str], "bool | None"]]] = [
-    ("1597-09-16", lambda m: True if "명량" in m else None),
+    ("1597-09-16", lambda m: True if _myeongnyang(m) else None),
     ("1592-04-13", lambda m: True if "임진왜란" in m or "왜란 터진" in m else None),
     ("1597-04-13", lambda m: True if ("어머니" in m or "어머님" in m) and any(w in m for w in ("돌아가", "별세", "부고")) else None),
     ("1597-10-14", lambda m: True if (MYEON_RE.search(m) or "아들" in m) and any(w in m for w in DEATH_WORDS) else None),
