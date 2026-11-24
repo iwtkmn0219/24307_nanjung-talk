@@ -233,3 +233,8 @@ def test_parse_emotion_two_different_values_is_ambiguous_but_same_value_twice_is
 def test_reclassify_retries_when_first_reply_is_ambiguous():
     c = FakeConverseClient(['{"emotion":"일상"} 아니 {"emotion":"비통"}', '{"emotion":"비통"}'])
     assert enrich_mod.reclassify("o", "t", client=c) == "비통" and c.calls == 2
+
+
+def test_system_prompt_unifies_bong_name():
+    system, _ = build_prompt(entry())
+    assert "菶" in system and "조카 봉" in system

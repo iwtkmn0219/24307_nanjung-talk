@@ -294,3 +294,30 @@ def test_prompt_quotes_the_refusal_phrase_instead_of_saying_above_phrase():
     c = FakeClient()
     answer("x", [hit(0.5)], [], "normal", client=c)
     assert "위 문구" not in system_of(c)
+
+
+# ---- 틀린 전제 바로잡기 / 시스템 쪽 표현 금지 ----
+def test_prompt_tells_model_to_correct_false_premises_from_the_diary():
+    c = FakeClient()
+    answer("유배가셨을때 얘기해줘요", [hit(0.5)], [], "normal", client=c)
+    s = system_of(c)
+    assert "전제" in s and "바로잡" in s
+    assert "유배가 아니라" in s                      # 예시
+    assert "지어내지" in s and "일기에 적지 않아" in s  # 근거 없는 전제는 바로잡지도 지어내지도 않는다
+
+
+def test_prompt_bans_system_side_wording_and_requires_first_person():
+    c = FakeClient()
+    answer("x", [hit(0.5)], [], "normal", client=c)
+    s = system_of(c)
+    for banned in ["주어진 일기", "[일기]", "질문이 가리키는 날"]:
+        assert banned in s                           # 금지 목록에 명시
+    assert "내 일기" in s and "그날 나는" in s and "1인칭" in s
+    assert "나열" in s                               # 근거로 받은 연도·날짜 목록 나열 금지
+
+
+def test_premise_and_wording_instructions_are_in_every_mode():
+    for mode, emo in (("normal", "일상"), ("serious", "비통")):
+        c = FakeClient()
+        answer("x", [hit(0.5, emo)], [], mode, client=c)
+        assert "바로잡" in system_of(c) and "내 일기" in system_of(c), mode
