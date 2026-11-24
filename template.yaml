@@ -22,7 +22,7 @@ Parameters:
     Type: String
   SimThreshold:
     Type: String
-    Default: "0.30"
+    Default: "0.22"
   DailyLimit:
     Type: Number
     Default: 20

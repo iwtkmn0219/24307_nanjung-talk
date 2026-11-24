@@ -163,10 +163,11 @@ def lambda_handler(event, context):
         if not hits:
             deadline.require(DB_OP_S)
             hits = db.search(conn, qvec, k=SEARCH_K)
-        mode = decide_mode(message, hits, float(os.environ.get("SIM_THRESHOLD", "0.30")), date_matched)
+        mode = decide_mode(message, hits, float(os.environ.get("SIM_THRESHOLD", "0.22")), date_matched)
         if mode in ("normal", "serious"):
             deadline.require(BEDROCK_CALL_S)
-        return response(200, answer(message, hits, history, mode, client=api_client()))
+        focus_ids = date_ids if date_matched else None  # 날짜로 찾은 일기는 "사용자가 묻는 날"이라고 모델에 알린다
+        return response(200, answer(message, hits, history, mode, client=api_client(), focus_ids=focus_ids))
     except BedrockUnavailable:
         _refund(client_id, charged_at, deadline)
         return response(503, {"answer": MSG_UNAVAILABLE})

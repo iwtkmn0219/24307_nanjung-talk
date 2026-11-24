@@ -165,3 +165,21 @@ def test_politics_of_the_era_is_not_modern(msg):
                                  "대통령 누구예요?", "21세기에 대해", "선거 결과는?"])
 def test_modern_markers(msg):
     assert decide_mode(msg, [hit(0.9)], 0.3, False) == "modern"
+
+
+def test_focus_diary_is_named_as_the_day_asked(fake_client):
+    h = hit(0.5)
+    answer("그다음 날은요?", [h], [], "normal", client=fake_client, focus_ids=[h.entry.id])
+    s = system_of(fake_client)
+    assert h.entry.label in s and "묻는 날" in s
+    assert "전날" in s and "다음 날" in s  # 근거를 전날·다음 날로 오해하지 말라는 지시
+
+
+def test_no_focus_paragraph_without_date_match(fake_client):
+    answer("배 멀미?", [hit(0.5)], [], "normal", client=fake_client)
+    assert "묻는 날" not in system_of(fake_client)
+
+
+def test_focus_ignores_ids_not_in_hits(fake_client):
+    answer("x", [hit(0.5)], [], "normal", client=fake_client, focus_ids=["nope"])
+    assert "묻는 날" not in system_of(fake_client)

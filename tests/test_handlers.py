@@ -40,7 +40,7 @@ API_CLIENT = object()
 
 class Recorder:
     def __init__(self):
-        self.answer_calls, self.quota_calls, self.clients = [], [], []
+        self.answer_calls, self.quota_calls, self.clients, self.focus = [], [], [], []
 
 
 @pytest.fixture
@@ -70,7 +70,8 @@ def env(monkeypatch):
             return [0.0] * 1024
         monkeypatch.setattr(chat, "embed", embed)
 
-        def answer(message, hits, history, mode, client=None):
+        def answer(message, hits, history, mode, client=None, focus_ids=None):
+            rec.focus.append(focus_ids)
             rec.clients.append(("answer", client))
             if answer_exc:
                 raise answer_exc
@@ -388,3 +389,22 @@ def test_no_time_left_touches_nothing(env):
     _, rec = env()
     r = chat.lambda_handler(ev(body()), Ctx(100))
     assert r["statusCode"] == 503 and rec.quota_calls == [] and rec.refunds == []
+
+
+def test_date_matched_question_passes_focus_ids_to_answer(env):
+    _, rec = env(FakeDB({("1592-08-24",): [Hit(entry("1592-08-24"), 0.2)]},
+                        neighbors={("1592-06-10", 1): "1592-08-24"}))
+    call(ev(body("그다음 날은요?", last_source_ids=["1592-06-10"])))
+    assert rec.focus == [["1592-08-24"]]
+
+
+def test_general_search_passes_no_focus(env):
+    _, rec = env()
+    call(ev(body()))
+    assert rec.focus == [None]
+
+
+def test_empty_date_result_falls_back_without_focus(env):
+    _, rec = env(FakeDB({None: [Hit(entry(), 0.9)]}))
+    call(ev(body("정유년 9월 16일 일기")))
+    assert rec.focus == [None]

@@ -70,11 +70,18 @@ def source_card(h: Hit) -> dict:
             "translation_line": _first_sentence(e.translation), "note": SOURCE_NOTE}
 
 
-def _system(mode: Mode, hits: list[Hit]) -> str:
+FOCUS_NOTE = ("사용자가 묻는 날은 [일기] 중 {labels}의 일기다. 사용자가 말한 '다음 날'·'전날'·날짜는 이미 이 일기를 "
+              "가리키도록 계산되어 있으니, 이 일기를 '전날'이나 '다음 날'로 여기지 말고 이 일기 내용으로 그날을 답하시오. "
+              "이 일기가 묻는 날 자체이므로 \"그날의 일은 일기에 없다\"고 하지 마시오.")
+
+
+def _system(mode: Mode, hits: list[Hit], focus_ids: list[str] | None = None) -> str:
     diary = "\n\n".join(f"<{h.entry.label}>\n원문: {h.entry.original}\n번역: {h.entry.translation}"
                         for h in hits[:TOP_N])
     style = SERIOUS_STYLE if mode == "serious" else NORMAL_STYLE
-    return f"{BASE_SYSTEM}\n{style}\n\n[일기]\n{diary}"
+    labels = [h.entry.label for h in hits[:TOP_N] if focus_ids and h.entry.id in focus_ids]
+    focus = f"\n{FOCUS_NOTE.format(labels=', '.join(labels))}" if labels else ""
+    return f"{BASE_SYSTEM}\n{style}{focus}\n\n[일기]\n{diary}"
 
 
 def _messages(history: list[dict], message: str) -> list[dict]:
@@ -94,12 +101,13 @@ def _messages(history: list[dict], message: str) -> list[dict]:
     return [{"role": m["role"], "content": [{"text": m["content"]}]} for m in out]
 
 
-def answer(message: str, hits: list[Hit], history: list[dict], mode: Mode, client=None) -> dict:
+def answer(message: str, hits: list[Hit], history: list[dict], mode: Mode, client=None,
+           focus_ids: list[str] | None = None) -> dict:
     suggestions = list(hits[0].entry.questions) if hits else []
     if mode in ("out_of_scope", "modern"):
         fixed = FIXED_OUT if mode == "out_of_scope" else FIXED_MODERN
         return {"answer": f"{fixed} {REDIRECT}", "mode": mode, "sources": [], "suggestions": suggestions}
-    text = bedrock.converse(_system(mode, hits), _messages(history, message), MAX_TOKENS, TEMPERATURE,
+    text = bedrock.converse(_system(mode, hits, focus_ids), _messages(history, message), MAX_TOKENS, TEMPERATURE,
                             client=client)
     return {"answer": text.strip(), "mode": mode, "sources": [source_card(h) for h in hits[:TOP_N]],
             "suggestions": suggestions}
