@@ -106,6 +106,24 @@ def _diag(message: str) -> dict:
             "general_hits": fmt(db.search(conn, qvec, k=5))}
 
 
+def _eval() -> dict:
+    """SIM_THRESHOLD 튜닝: 평가 질문마다 일기 전체에서 최고 유사도를 구하고 기준값별 정확도를 계산한다."""
+    from .. import evaluation as ev
+    questions = json.loads(ev.QUESTIONS_PATH.read_text(encoding="utf-8"))
+    conn = get_conn()
+    rows = []
+    for q in questions:
+        hits = db.search(conn, embed(q["q"]), k=1)
+        top = hits[0] if hits else None
+        rows.append({"q": q["q"], "expect": q["expect"], "sim": round(top.similarity, 4) if top else 0.0,
+                     "top_id": top.entry.id if top else None})
+    triples = [(r["q"], r["expect"], r["sim"]) for r in rows]
+    table = ev.sweep(triples)
+    return {"rows": rows, "table": table, "best": ev.best(table), "separation": ev.separation(triples),
+            "in_dist": ev.distribution([r["sim"] for r in rows if r["expect"] == "in"]),
+            "out_dist": ev.distribution([r["sim"] for r in rows if r["expect"] == "out"])}
+
+
 def lambda_handler(event, context):
     action = event.get("action")
     if action == "init_schema":
@@ -119,4 +137,6 @@ def lambda_handler(event, context):
         return db.stats(get_conn())
     if action == "diag":
         return _diag(event["message"])
+    if action == "eval":
+        return _eval()
     raise ValueError(f"알 수 없는 action: {action!r}")

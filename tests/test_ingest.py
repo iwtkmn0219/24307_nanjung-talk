@@ -201,3 +201,20 @@ def test_diag_reports_resolution_and_similarities(fakes, monkeypatch):
     assert out["date_ids"] == ["1597-09-16"]
     assert out["date_hits"] == [["1597-09-16", 0.42]] and out["general_hits"][0] == ["1597-09-16", 0.42]
     assert calls == [["1597-09-16"], None]
+
+
+def test_eval_action_scores_questions_and_returns_sweep(fakes, monkeypatch):
+    import json as _json
+    from nanjung import evaluation as ev
+    from nanjung.models import Hit
+    _, _, fdb, _ = fakes({})
+    qs = _json.loads(ev.QUESTIONS_PATH.read_text(encoding="utf-8"))
+    outs = {q["q"] for q in qs if q["expect"] == "out"}
+    monkeypatch.setattr(ingest, "embed", lambda text, client=None: [1.0 if text in outs else 0.0])
+    ent = DiaryEntry("S", "壬辰", 1592, 4, False, 13, "壬寅", "x", id="1592-04-13")
+    fdb.search = lambda conn, qvec, k=5, date_ids=None: [Hit(ent, 0.10 if qvec[0] == 1.0 else 0.50)]
+    out = ingest.lambda_handler({"action": "eval"}, None)
+    assert len(out["rows"]) == 40 and out["rows"][0] == {"q": qs[0]["q"], "expect": "in", "sim": 0.5, "top_id": "1592-04-13"}
+    assert out["best"] == {"threshold": 0.11, "accuracy": 1.0, "in_missed": 0, "out_leaked": 0}
+    assert len(out["table"]) == 31 and out["separation"]["overlap"] is False
+    assert out["in_dist"]["n"] == 25 and out["out_dist"]["n"] == 15 and out["out_dist"]["max"] == 0.1
