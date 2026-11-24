@@ -201,7 +201,8 @@ def _handle(event, context):
         if is_today_question(message) and not NEGATION_RE.search(message) and not mentions_date_or_event(message):
             date_ids = _todays_diary_ids(conn, message, charged_at, deadline)
         else:
-            date_ids = resolve(message, last_ids, neighbor)
+            # '오늘'을 말했지만 오늘 일기로 연결하지 않는 경우(부정 등)에는 직전 답변을 상대일 기준으로 쓰지 않는다
+            date_ids = resolve(message, [] if is_today_question(message) else last_ids, neighbor)
         deadline.require(BEDROCK_CALL_S)
         qvec = embed(message, client=api_client())
         hits = []

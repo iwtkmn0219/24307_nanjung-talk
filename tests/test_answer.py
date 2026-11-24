@@ -541,3 +541,16 @@ def test_system_prompt_forbids_denying_a_premise_the_diary_never_mentions(fake_c
     assert "그렇지 않소" in s and "아니오" in s                    # 금지할 부정 표현을 구체적으로 못박는다
     assert "관련" in s and "적혀 있지 않" in s or "적지 않" in s
     assert "모순" in s                                          # 부정은 기록이 직접 모순될 때만
+
+
+def test_card_keeps_a_content_sentence_that_merely_starts_with_cho():
+    # '초조했다.'는 날짜 명칭이 아니라 내용이다
+    assert card("十三日壬寅。晴。出陣。", "13일 임인. 맑다. 초조했다. 곧 출정하였다.")[1] == "초조했다. 곧 출정하였다."
+    for head in ["초하루 신유일.", "초이틀.", "초사흘 병오날.", "초이렛날 무진.", "초팔일.", "초여섯 날 정묘.", "초열흘째."]:
+        assert card("十三日壬寅。晴。出陣。", f"{head} 맑다. 출정하였다.")[1] == "출정하였다.", head
+
+
+def test_card_skips_korean_header_with_nal_and_comma_forms():
+    for head in ["초하루 날 병술.", "초하루 날, 갑진일.", "초여섯 날, 을해일.", "초이틀 날 갑인일."]:
+        assert card("十三日壬寅。晴。出陣。", f"{head} 맑다. 출정하였다.")[1] == "출정하였다.", head
+    assert card("十三日壬寅。出陣。", "초하루 날씨는 맑았다. 출정하였다.")[1].startswith("초하루 날씨")   # 날씨 문장은 머리가 아니다

@@ -596,3 +596,19 @@ def test_event_beats_today_expression(env, monkeypatch):
     _no_today_lookup(monkeypatch)
     call(ev(body("명량 오늘의 장군")))
     assert fdb.search_calls[0] == (5, ["1597-09-16"])
+
+
+def test_negated_today_with_relative_day_does_not_anchor_on_previous_answer(env, monkeypatch):
+    # '오늘의 일기 말고 전날'은 기준(명시 날짜·사건)이 없으니 직전 근거로 전날을 고정하지 않고 일반 검색으로 넘긴다
+    fdb, rec = _today_env(env, monkeypatch, ITEMS_TODAY, results={("WRONG",): [Hit(entry("WRONG"), 0.1)]})
+    _no_today_lookup(monkeypatch)
+    fdb.neighbors = {("1592-06-10", -1): "WRONG"}
+    call(ev(body("오늘의 일기 말고 전날 이야긴요?", last_source_ids=["1592-06-10"])))
+    assert fdb.search_calls == [(5, None)] and rec.focus == [None]
+
+
+def test_plain_followup_still_uses_previous_answer_as_anchor(env, monkeypatch):
+    fdb, rec = _today_env(env, monkeypatch, ITEMS_TODAY, results={("1592-06-09",): [Hit(entry("1592-06-09"), 0.1)]})
+    fdb.neighbors = {("1592-06-10", -1): "1592-06-09"}
+    call(ev(body("전날은요?", last_source_ids=["1592-06-10"])))
+    assert fdb.search_calls[0] == (5, ["1592-06-09"])
