@@ -283,3 +283,17 @@ def test_today_with_past_expression_or_honorific_past_is_detected(msg):
 def test_past_expression_or_honorific_without_today_word_is_not_detected(msg):
     from nanjung.date_resolver import is_today_question
     assert is_today_question(msg) is False
+
+
+@pytest.mark.parametrize("msg", ["오늘 옛 친구 이야기를 들려주세요", "오늘은 당시의 풍습을 설명해 주세요", "오늘 점심은 어디서 하셨어요?",
+                                 "올해 이맘때 날씨는 어때요?", "작년 이맘때 뭐 했어요?", "이번 달 이맘때는 어때요?"])
+def test_time_words_that_modify_something_else_are_not_detected(msg):
+    from nanjung.date_resolver import is_today_question
+    assert is_today_question(msg) is False
+
+
+@pytest.mark.parametrize("msg", ["오늘 하루 뭐 하셨어요?", "오늘은 어디서 지내셨어요?", "오늘 무슨 일이 있으셨어요?", "옛 오늘 어떠셨어요?",
+                                 "과거의 오늘은 어땠어요?", "이맘때는 어떻게 지내셨어요?"])
+def test_adjacent_past_today_and_day_activity_questions_are_detected(msg):
+    from nanjung.date_resolver import is_today_question
+    assert is_today_question(msg) is True

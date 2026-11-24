@@ -556,8 +556,14 @@ def test_every_request_is_logged_with_a_short_client_id_and_status(env, caplog):
 ITEMS_TODAY = {"12-01": {"md": "12-01", "ids": ["x-a"], "exact": True}}
 
 
+class TodayLookupCalled(BaseException):
+    """오늘의 일기 조회 경로는 Exception을 삼켜 일반 검색으로 폴백하므로, 삼켜지지 않는 예외로 호출 자체를 잡는다."""
+
+
 def _no_today_lookup(monkeypatch):
-    monkeypatch.setattr(chat, "today_table", lambda: (_ for _ in ()).throw(AssertionError("오늘 조회하면 안 됨")))
+    def spy():
+        raise TodayLookupCalled("오늘 조회하면 안 됨")
+    monkeypatch.setattr(chat, "today_table", spy)
 
 
 @pytest.mark.parametrize("msg", ["오늘 일기 말고 배 멀미 얘기해 줘요", "오늘의 일기는 빼고 활 이야기를 해 주세요",
@@ -643,3 +649,14 @@ def test_past_today_with_relative_day_uses_neighbor_of_todays_diary(env, monkeyp
     fdb.neighbors = {("x-a", -1): "x-0"}
     call(ev(body("오늘 전날은 뭐 하셨어요?", last_source_ids=["1592-06-10"])))
     assert fdb.search_calls[0] == (5, ["x-0"])
+
+
+# ---- 리뷰 반영: 시간 표현이 질문에 걸리지 않으면 오늘 날짜를 강제하지 않는다 ----
+@pytest.mark.parametrize("msg", ["오늘 옛 친구 이야기를 들려주세요", "오늘은 당시의 풍습을 설명해 주세요", "오늘 점심은 어디서 하셨어요?",
+                                 "올해 이맘때 날씨는 어때요?", "요즘 이맘때 뭐 하셨어요?", "이맘때 말고 전날 이야기 해 주세요",
+                                 "정유년 9월 16일 이맘때 뭐 하셨어요?"])
+def test_loosely_related_time_words_do_not_force_todays_diary(env, monkeypatch, msg):
+    fdb, rec = _today_env(env, monkeypatch, ITEMS_TODAY, results={("1597-09-16",): [Hit(entry("1597-09-16"), 0.1)]})
+    _no_today_lookup(monkeypatch)
+    call(ev(body(msg, last_source_ids=["1592-06-10"] if "전날" in msg else [])))
+    assert "x-a" not in [i for c in fdb.search_calls for i in (c[1] or [])]
