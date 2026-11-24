@@ -531,3 +531,13 @@ def test_card_preserves_original_punctuation_and_handles_translation_without_spa
     nl = chr(10)
     assert card("十三日壬寅。晴。出東軒。", "13일 임인。" + nl + "맑다。" + nl + "동헌에 나갔다。")[1] == "동헌에 나갔다。"   # 。와 줄바꿈
     assert card("十三日壬寅。晴。出東軒。", "13일 임인. 맑다. 값이 3.5냥이었다.")[1] == "값이 3.5냥이었다."     # 소수점은 경계가 아니다
+
+
+def test_system_prompt_forbids_denying_a_premise_the_diary_never_mentions(fake_client):
+    # 질문의 숫자·사실이 일기에 아예 없으면 '아니오/그렇지 않소'로 부정하지 않고, 일기의 관련 사실과 '그 수치는 일기에 없다'만 말한다
+    answer("12척의 배로 이긴 것이 사실이오?", [hit(0.5)], [], "normal", client=fake_client)
+    s = system_of(fake_client)
+    assert "아예 없" in s and "부정하지" in s
+    assert "그렇지 않소" in s and "아니오" in s                    # 금지할 부정 표현을 구체적으로 못박는다
+    assert "관련" in s and "적혀 있지 않" in s or "적지 않" in s
+    assert "모순" in s                                          # 부정은 기록이 직접 모순될 때만
