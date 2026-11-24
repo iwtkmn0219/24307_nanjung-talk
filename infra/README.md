@@ -58,3 +58,20 @@ cat out.json            # {"count": 366} 이어야 한다. "FunctionError"가 �
 ```
 
 확인: RDS `diary` 행 수 1,593, DynamoDB `TodayMap` 항목 366.
+
+## 6. 웹 배포 — S3 + CloudFront (Task 12, 실제 생성한 구성)
+
+- 웹 버킷 `nanjung-web-<계정ID>`: 퍼블릭 차단, 정적 호스팅 끔. `web/`만 올린다(`scripts/`·`tests/`는 올리지 않는다).
+  - 올리기 전에 `web/config.js`가 `window.API_BASE = "";`인지 확인한다(`git diff web/config.js`가 비어 있어야 한다).
+  - `aws s3 sync web s3://<웹 버킷>/ --delete --exclude "fonts/*" --cache-control "public, max-age=300"`
+  - `aws s3 sync web/fonts s3://<웹 버킷>/fonts/ --exclude "*.woff2" --cache-control "public, max-age=31536000, immutable"` 후 `fonts.css`만 `max-age=300`으로 다시 올린다(해시 이름이 아님).
+  - woff2는 `--content-type font/woff2`로 올린다.
+- OAC 1개(`nanjung-web-oac`, sigv4, s3). 버킷 정책은 `cloudfront.amazonaws.com`에게 `s3:GetObject`만 허용하고 `AWS:SourceArn`을 이 배포 ARN으로 제한한다. 직접 S3 URL은 403이다.
+- CloudFront 배포(`PriceClass_200`, HTTP/2·3, 기본 루트 `index.html`)
+  - 오리진 `web`: 웹 버킷(OAC). 오리진 `api`: HTTP API 도메인(https-only, 읽기 30초)
+  - 기본 동작: `web`, redirect-to-https, `Managed-CachingOptimized`, GET·HEAD
+  - 동작 `/chat`, `/diary*`: `api`, https-only, 모든 메서드, `Managed-CachingDisabled`, `Managed-AllViewerExceptHostHeader`
+  - 관리형 정책 ID는 계정마다 확인한다: `aws cloudfront list-cache-policies --type managed` (CachingDisabled는 `4135ea2d-6df8-44a3-9df3-4b5a84be39ad`)
+- 확인 결과: 정적 파일 200, `http://` → 301 `https://`, `/diary`·`/chat` 200, OPTIONS 204, 직접 S3 403, 브라우저에서 `/chat`이 같은 출처로 나감.
+- 파일을 고쳐 다시 올린 뒤 바로 반영하려면 `aws cloudfront create-invalidation --distribution-id <ID> --paths "/*"`. 안 해도 5분(max-age=300) 안에 바뀐다.
+- `sam deploy`는 `--parameter-overrides`에 없는 파라미터에 이전 값을 쓴다. `SimThreshold=0.22`는 배포 때마다 명시한다.
