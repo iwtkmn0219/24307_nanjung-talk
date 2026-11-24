@@ -2,11 +2,15 @@ from datetime import date
 
 import pytest
 
-from nanjung.answer import (FIXED_MODERN, FIXED_OUT, MODERN_MARKERS, answer, decide_mode,
-                            source_card)
+from nanjung.answer import (FIXED_MODERN, FIXED_OUT, FIXED_SUGGESTIONS, MODERN_MARKERS, answer, decide_mode,
+                            fixed_suggestions, source_card)
 from nanjung.models import SOURCE_NOTE, DiaryEntry, Hit
 
 _n = iter(range(10_000))
+
+
+def assert_fixed_chips(chips):
+    assert len(chips) == 3 and len(set(chips)) == 3 and set(chips) <= set(FIXED_SUGGESTIONS), chips
 
 
 def hit(sim, emo="일상", original="十三日壬寅。晴。出東軒公事。", translation="13일 임인. 맑음. 동헌에 나가 공무를 보았다."):
@@ -75,7 +79,8 @@ def test_out_of_scope_does_not_call_llm(fake_client):
     r = answer("인공지능이 뭐예요?", [top], [], "out_of_scope", client=fake_client)
     assert fake_client.calls == 0 and r["answer"].startswith("처음 듣는 말이라 내 답할 길이 없소.")
     assert r["answer"].endswith("대신 내 일기 이야기를 들려주리다.")
-    assert r["sources"] == [] and r["suggestions"] == top.entry.questions and r["mode"] == "out_of_scope"
+    assert r["sources"] == [] and r["mode"] == "out_of_scope"
+    assert_fixed_chips(r["suggestions"])                       # 검색 1등 일기의 질문이 아니라 고정 세트에서
 
 
 def test_modern_does_not_call_llm(fake_client):
@@ -84,8 +89,8 @@ def test_modern_does_not_call_llm(fake_client):
     assert FIXED_MODERN == "후대의 일은 모르오." and FIXED_OUT == "처음 듣는 말이라 내 답할 길이 없소."
 
 
-def test_fixed_answer_with_no_hits_has_no_suggestions(fake_client):
-    assert answer("x", [], [], "out_of_scope", client=fake_client)["suggestions"] == []
+def test_fixed_answer_with_no_hits_still_has_fixed_suggestions(fake_client):
+    assert_fixed_chips(answer("x", [], [], "out_of_scope", client=fake_client)["suggestions"])
 
 
 def system_of(c):
@@ -261,7 +266,7 @@ def test_model_says_no_basis_becomes_out_of_scope():
     assert c.calls == 1
     assert r["mode"] == "out_of_scope" and r["sources"] == []
     assert r["answer"] == "처음 듣는 말이라 내 답할 길이 없소. 대신 내 일기 이야기를 들려주리다."
-    assert r["suggestions"] == top.entry.questions
+    assert_fixed_chips(r["suggestions"])
 
 
 def test_no_basis_is_detected_by_prefix_and_surrounding_noise():
@@ -282,7 +287,7 @@ def test_date_matched_question_with_refusal_becomes_out_of_scope_without_cards()
                focus_ids=[h.entry.id])
     assert r["mode"] == "out_of_scope" and r["sources"] == []
     assert r["answer"] == "처음 듣는 말이라 내 답할 길이 없소. 대신 내 일기 이야기를 들려주리다."
-    assert r["suggestions"] == h.entry.questions
+    assert_fixed_chips(r["suggestions"])
 
 
 def test_date_matched_normal_answer_is_kept():
@@ -411,3 +416,47 @@ def test_prior_rules_are_kept_with_the_new_tone_rule():
     s = system_of(c)
     for kept in ["3문장 이내", "지어내", "직접 모순", "이모지", "하오체", "처음 듣는 말이라 내 답할 길이 없소."]:
         assert kept in s, kept
+
+
+def test_source_card_short_content_followed_by_a_long_sentence_is_truncated_not_left_short():
+    long_k = "꿈에 나는 말을 타고 언덕 위를 다니다가 말이 발을 헛디뎌 내가 개울에 떨어졌는데도 넘어지지 않았다."
+    o, t = card("十四日辛未。晴。夜四更。" + "夢" * 80 + "。", "14일 신미. 맑음. 새벽 4경. " + long_k)
+    assert t.startswith("새벽 4경. 꿈에 나는") and len(t) == 60 and t.endswith("…")   # 잘렸다는 표시
+    assert o.startswith("夜四更。夢") and len(o) == 60 and o.endswith("…")
+
+
+def test_source_card_enough_content_before_the_cap_is_not_ellipsized():
+    _, t = card("十三日壬寅。出東軒公事。", "13일 임인. 동헌에 나가 공무를 보았다. 활을 쏘았다.")
+    assert t == "동헌에 나가 공무를 보았다." and "…" not in t
+
+
+# ---- 일기 밖·현대 질문의 추천 질문은 고정 세트에서 ----
+def test_fixed_suggestion_set_size_style_and_safety():
+    assert 8 <= len(FIXED_SUGGESTIONS) <= 10 and len(set(FIXED_SUGGESTIONS)) == len(FIXED_SUGGESTIONS)
+    for q in FIXED_SUGGESTIONS:
+        assert q.endswith("?") and ("습니까" in q or "십니까" in q), q        # 기존 chip 어투: 장군께 묻는 존대 질문
+        assert not any(m in q for m in MODERN_MARKERS), q                  # 눌렀을 때 현대 질문으로 막히면 안 된다
+        assert len(q) <= 40, q
+
+
+def test_fixed_suggestions_pick_three_distinct_and_rotate():
+    import random
+    a = fixed_suggestions(random.Random(1))
+    assert len(a) == 3 and len(set(a)) == 3 and set(a) <= set(FIXED_SUGGESTIONS)
+    assert fixed_suggestions(random.Random(1)) == a                        # 같은 씨앗이면 같은 결과
+    seen = set()
+    for _ in range(60):
+        seen |= set(fixed_suggestions())
+    assert seen == set(FIXED_SUGGESTIONS)                                  # 호출마다 돌려 써서 전부 노출된다
+
+
+def test_modern_answer_uses_fixed_suggestions_even_with_irrelevant_top_hit(fake_client):
+    r = answer("요즘 정치 어때요?", [hit(0.9)], [], "modern", client=fake_client)
+    assert_fixed_chips(r["suggestions"]) and r["sources"] == []
+
+
+def test_normal_and_serious_keep_the_top_hits_own_questions(fake_client):
+    top = hit(0.6)
+    assert answer("x", [top], [], "normal", client=fake_client)["suggestions"] == top.entry.questions
+    grief = hit(0.6, "비통")
+    assert answer("x", [grief], [], "serious", client=fake_client)["suggestions"] == grief.entry.questions

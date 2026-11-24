@@ -1,6 +1,7 @@
 """답변 모드 결정, 프롬프트 구성, 출처 카드."""
 from __future__ import annotations
 
+import random
 import re
 from typing import Literal
 
@@ -17,6 +18,26 @@ NOW_MARKERS = ("요즘", "현대", "오늘날", "지금")
 FIXED_OUT = "처음 듣는 말이라 내 답할 길이 없소."
 FIXED_MODERN = "후대의 일은 모르오."
 REDIRECT = "대신 내 일기 이야기를 들려주리다."
+# 일기 밖·현대 질문에 보여 주는 고정 추천 질문. 하나씩 실 API로 눌러 보고, 일기 근거가 분명한 normal·serious 답과
+# 질문에 맞는 출처 카드가 나온 것만 넣었다(근거가 약한 질문은 뺐다). 바꿀 때는 같은 방식으로 다시 확인한다.
+FIXED_SUGGESTIONS = (
+    "명량 해전은 어떻게 싸우셨습니까?",
+    "어머님께서 돌아가셨을 때 어떠셨습니까?",
+    "아드님 면이 전사했을 때 어떠셨습니까?",
+    "거북선을 시험하신 날은 어땠습니까?",
+    "활쏘기는 어떻게 하셨습니까?",
+    "원균 장군에 대해 어떻게 생각하셨습니까?",
+    "임진왜란이 터진 날 무엇을 하고 계셨습니까?",
+    "출옥하신 날은 어떠셨습니까?",
+    "백의종군하실 때는 어떠셨습니까?",
+)
+
+
+def fixed_suggestions(rng=None, n: int = 3) -> list[str]:
+    """고정 세트에서 n개를 무작위로 뽑는다(호출마다 달라진다)."""
+    return (rng or random).sample(FIXED_SUGGESTIONS, n)
+
+
 TOP_N = 3
 HISTORY_MESSAGES = 6  # 메시지 6개(질문·답변 3쌍). frontend 플랜의 history 보관 기준과 같다
 MAX_TOKENS = 400
@@ -95,6 +116,11 @@ def _is_weather_k(sentence: str) -> bool:
     return len(sentence) <= 10 and bool(WEATHER_K_RE.search(sentence))
 
 
+def _clip(text: str) -> str:
+    """60자를 넘으면 잘렸다는 표시(…)와 함께 60자로 자른다."""
+    return text if len(text) <= ORIGINAL_LINE_MAX else text[:ORIGINAL_LINE_MAX - 1] + "…"
+
+
 def _card_line(sentences: list[str], is_header, is_weather, joiner: str) -> str:
     """머리 문장과 이어지는 날씨 문장을 건너뛴 내용 문장을 60자 안에서 돌려준다. 남는 문장이 없으면 첫 문장."""
     if not sentences:
@@ -105,12 +131,13 @@ def _card_line(sentences: list[str], is_header, is_weather, joiner: str) -> str:
         rest.pop(0)
         skipped += 1
     if not rest:
-        return sentences[0][:ORIGINAL_LINE_MAX]
+        return _clip(sentences[0])
     line = ""
     for sent in rest:
         candidate = sent if not line else line + joiner + sent
         if len(candidate) > ORIGINAL_LINE_MAX:
-            return (line or candidate)[:ORIGINAL_LINE_MAX]
+            # 이미 충분히 모였으면 거기서 끝내고, 아직 짧으면(예: '새벽 4경.') 긴 문장까지 이어 붙여 60자로 자른다
+            return line if len(line) >= CARD_MIN_CONTENT else _clip(candidate)
         line = candidate
         if len(line) >= CARD_MIN_CONTENT:
             break
@@ -163,10 +190,11 @@ def _messages(history: list[dict], message: str) -> list[dict]:
 
 def answer(message: str, hits: list[Hit], history: list[dict], mode: Mode, client=None,
            focus_ids: list[str] | None = None) -> dict:
-    suggestions = list(hits[0].entry.questions) if hits else []
+    suggestions = list(hits[0].entry.questions) if hits else []   # normal·serious: 근거 1등 일기의 질문
     if mode in ("out_of_scope", "modern"):
         fixed = FIXED_OUT if mode == "out_of_scope" else FIXED_MODERN
-        return {"answer": f"{fixed} {REDIRECT}", "mode": mode, "sources": [], "suggestions": suggestions}
+        # 검색 1등 일기는 질문과 무관해서(예: '오늘의 장군님은…'에 도원수 유지 질문) 고정 세트를 쓴다
+        return {"answer": f"{fixed} {REDIRECT}", "mode": mode, "sources": [], "suggestions": fixed_suggestions()}
     labels = [h.entry.label for h in hits[:TOP_N] if focus_ids and h.entry.id in focus_ids]
     # "그다음 날은요?" 같은 상대 표현은 모델이 근거를 '전날'로 오해한다 → 이미 계산된 날짜를 질문 옆에 적어 준다
     asked = f"{message}\n\n[질문이 가리키는 날: {', '.join(labels)}]" if labels else message
@@ -176,6 +204,6 @@ def answer(message: str, hits: list[Hit], history: list[dict], mode: Mode, clien
     # 날짜로 찾은 질문도 같다: 정상 답이면 그 일기로 답하지만, "날짜 + 현대·무관 주제" 혼합이면 거절이 맞다.
     if LEAD_RE.sub("", text).startswith(FIXED_OUT):  # 앞의 …·「·따옴표 등은 무시
         return {"answer": f"{FIXED_OUT} {REDIRECT}", "mode": "out_of_scope", "sources": [],
-                "suggestions": suggestions}
+                "suggestions": fixed_suggestions()}
     return {"answer": text, "mode": mode, "sources": [source_card(h) for h in hits[:TOP_N]],
             "suggestions": suggestions}

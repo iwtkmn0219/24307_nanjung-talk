@@ -129,21 +129,9 @@ def _body(event) -> tuple[str, list, list[str]]:
     return message.strip(), history[-MAX_HISTORY_ITEMS:], ids[:MAX_SOURCE_IDS]
 
 
-def _modern(message: str, deadline: "Deadline") -> dict:
-    """현대 질문은 LLM 없이 고정 답변. 추천 질문용 검색이 실패해도 고정 답변은 돌려준다."""
-    try:  # 추천 질문은 시간이 남을 때만. 모자라거나 실패하면 추천 없이 고정 답변
-        deadline.require(DB_CONN_S)
-        conn = get_conn()
-        deadline.require(BEDROCK_CALL_S)
-        qvec = embed(message, client=api_client())
-        deadline.require(DB_OP_S)
-        hits = db.search(conn, qvec, k=SEARCH_K)
-    except OutOfTime:
-        hits = []
-    except Exception:
-        log.warning("현대 질문 추천 검색 실패", exc_info=True)
-        hits = []
-    return answer(message, hits, [], "modern")
+def _modern(message: str) -> dict:
+    """현대 질문은 LLM·검색 없이 고정 답변과 고정 추천 질문만 돌려준다(DB·Bedrock 장애와 무관)."""
+    return answer(message, [], [], "modern")
 
 
 def lambda_handler(event, context):
@@ -164,7 +152,7 @@ def lambda_handler(event, context):
         return response(429, {"answer": MSG_LIMIT})
 
     if is_modern(message):
-        return response(200, _modern(message, deadline))
+        return response(200, _modern(message))
 
     try:
         deadline.require(DB_CONN_S)

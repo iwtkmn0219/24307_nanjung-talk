@@ -268,7 +268,7 @@ def test_modern_question_survives_bedrock_outage(env, monkeypatch):
     monkeypatch.setattr(chat, "answer", real.answer)
     status, out = call(ev(body("요즘 일본이랑 사이 어때요?")))
     assert status == 200 and out["mode"] == "modern"
-    assert out["answer"].startswith("후대의 일은 모르오.") and out["suggestions"] == []
+    assert out["answer"].startswith("후대의 일은 모르오.") and len(out["suggestions"]) == 3
 
 
 def test_modern_question_survives_db_outage(env, monkeypatch):
@@ -280,15 +280,20 @@ def test_modern_question_survives_db_outage(env, monkeypatch):
         raise OSError("db down")
     monkeypatch.setattr(chat, "get_conn", boom)
     status, out = call(ev(body("요즘 일본이랑 사이 어때요?")))
-    assert status == 200 and out["mode"] == "modern" and out["suggestions"] == []
+    assert status == 200 and out["mode"] == "modern" and len(out["suggestions"]) == 3
 
 
-def test_modern_question_uses_search_for_suggestions_when_healthy(env, monkeypatch):
+def test_modern_question_needs_no_search_or_embedding_and_returns_fixed_chips(env, monkeypatch):
     import nanjung.answer as real
-    fdb, _ = env(FakeDB({None: [Hit(entry(), 0.9)]}))
+    fdb, rec = env(FakeDB({None: [Hit(entry(), 0.9)]}))
     monkeypatch.setattr(chat, "answer", real.answer)
+    calls = {"embed": 0, "conn": 0}
+    monkeypatch.setattr(chat, "embed", lambda *a, **k: calls.__setitem__("embed", calls["embed"] + 1) or [0.0] * 1024)
+    monkeypatch.setattr(chat, "get_conn", lambda: calls.__setitem__("conn", calls["conn"] + 1) or object())
     _, out = call(ev(body("요즘 일본이랑 사이 어때요?")))
-    assert out["suggestions"] == ["q1", "q2", "q3"] and fdb.search_calls == [(5, None)]
+    assert out["mode"] == "modern" and out["sources"] == [] and fdb.search_calls == []
+    assert calls == {"embed": 0, "conn": 0}                        # 고정 chip이라 임베딩도 DB도 필요 없다
+    assert set(out["suggestions"]) <= set(real.FIXED_SUGGESTIONS) and len(out["suggestions"]) == 3
 
 
 class Ctx:
