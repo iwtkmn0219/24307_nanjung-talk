@@ -19,13 +19,16 @@ MYEON_RE = re.compile(r"(?:^|[^가-힣])면(?:이|의|은|을|과|이가)?(?=[^�
 LAST_RE = re.compile(r"마지막\s*(?:일기|날|기록|전투|싸움|해전)")
 DEATH_WORDS = ("전사", "죽", "잃")
 
+# 옥에 갇혔다 풀려난 일(정유 4/1 출옥)을 가리키는 말. "옥" 한 글자는 옥수수 등과 겹쳐 쓰지 않는다.
+PRISON_WORDS = ("백의종군", "출옥", "감옥", "유배", "귀양", "투옥", "옥살이", "옥에 갇", "파직", "하옥", "압송")
+
 # (판정 함수, 일기 id). 위에서부터 먼저 맞는 것을 쓴다.
 EVENTS: list[tuple[Callable[[str], bool], str]] = [
     (lambda m: "명량" in m, "1597-09-16"),
     (lambda m: "임진왜란" in m or "왜란 터진" in m, "1592-04-13"),
     (lambda m: ("어머니" in m or "어머님" in m) and any(w in m for w in ("돌아가", "별세", "부고")), "1597-04-13"),
     (lambda m: (MYEON_RE.search(m) or "아들" in m) and any(w in m for w in DEATH_WORDS), "1597-10-14"),
-    (lambda m: any(w in m for w in ("백의종군", "출옥", "감옥")), "1597-04-01"),
+    (lambda m: any(w in m for w in PRISON_WORDS), "1597-04-01"),
     (lambda m: "노량" in m or bool(LAST_RE.search(m)), "1598-11-17"),
 ]
 

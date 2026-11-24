@@ -89,3 +89,22 @@ def test_mother_word_alone_is_not_event():
 
 def test_explicit_date_with_relative_uses_that_date_as_anchor():
     assert r("정유년 9월 16일 전날", ["1592-06-10"]) == ["1597-09-15"]
+
+
+@pytest.mark.parametrize("msg", [
+    "유배가셨을때 얘기해줘요", "옥살이 하실 때 어떠셨어요?", "귀양 가신 적 있으세요?", "투옥되셨을 때는요?",
+    "옥에 갇히셨을 때 마음이 어땠어요?", "파직당하셨을 때 기분이 어땠어요?", "하옥되신 이유가 뭐예요?", "압송되셨을 때 이야기해 주세요",
+])
+def test_imprisonment_and_exile_words_map_to_release_day(msg):
+    assert r(msg) == ["1597-04-01"]
+
+
+@pytest.mark.parametrize("msg", ["옥수수 좋아하세요?", "독옥이 뭐예요?", "배 멀미 하셨어요?", "배를 타고 가셨어요?",
+                                 "압력이 높았나요?", "파도가 높았던 날은?", "옥구슬을 보셨어요?"])
+def test_words_that_merely_contain_the_syllables_do_not_match(msg):
+    assert r(msg) is None
+
+
+def test_event_words_combine_with_relative_day():
+    nb2 = {("1597-04-01", 1): "1597-04-02"}.get
+    assert resolve("유배 다음날은요?", [], lambda i, d: nb2((i, d))) == ["1597-04-02"]
