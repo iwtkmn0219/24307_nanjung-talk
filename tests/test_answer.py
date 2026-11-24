@@ -468,3 +468,47 @@ def test_prompt_forbids_adding_feelings_reasons_or_methods_not_in_the_diary():
     s = system_of(c)
     assert "느낌" in s and "이유" in s and "결심" in s and "방법" in s     # 일기에 없는 감정·이유·결심·방법 덧붙이기 금지
     assert "도리라 여겼소" in s and "덧붙이지" in s                        # 실제로 나온 사례를 금지 예시로
+
+
+# ---- 리뷰 반영: 날짜 표기·날씨는 문장 전체와 대조한다 ----
+def test_card_keeps_a_sentence_with_a_name_that_contains_a_weather_character():
+    assert card("二十八日甲辰。晴。申霽雲除主簿而去。", "28일 갑진. 맑음. 신제운이 주부에서 물러나 떠났다.") == \
+        ("申霽雲除主簿而去。", "신제운이 주부에서 물러나 떠났다.")
+
+
+def test_card_keeps_short_event_sentences_that_start_with_a_weather_character():
+    assert card("十四日乙卯。風折船。", "14일 을묘. 바람이 불어 배가 부러졌다.") == ("風折船。", "바람이 불어 배가 부러졌다.")
+    assert card("十三日壬寅。晴。風折船。", "13일 임인. 맑다. 배가 바람에 부러졌다.") == ("風折船。", "배가 바람에 부러졌다.")
+
+
+def test_card_does_not_cut_an_event_attached_to_the_date():
+    assert card("十四日出戰。", "14일 출전.") == ("十四日出戰。", "14일 출전.")
+    assert card("十四日出戰。晴。賊船來。", "14일 출전. 맑다. 적선이 왔다.")[0].startswith("十四日出戰。")
+
+
+def test_card_keeps_solar_term_info_after_the_ganji_header():
+    o, t = card("十一日乙酉冬至。曉。行望闕禮。", "11일 을유 동지. 새벽. 망궐례를 행했다.")
+    assert o.startswith("十一日乙酉冬至。") and "行望闕禮" in o
+    assert t.startswith("11일 을유 동지.")
+
+
+def test_card_skips_missing_ganji_header_and_its_weather_marker():
+    assert card("二十四日干支。缺晴。申時。發船。", "24일 간지 빠짐. 맑음. 신시에 배를 출발시켰다.") == ("申時。發船。", "신시에 배를 출발시켰다.")
+
+
+def test_card_weather_is_matched_against_the_whole_sentence():
+    # 날씨 단어가 들어 있어도 사건이 붙은 문장은 날씨가 아니다
+    assert card("十三日壬寅。晴而軍器點。", "13일 임인. 맑은 날 군기를 점검했다.") == ("晴而軍器點。", "맑은 날 군기를 점검했다.")
+    assert card("十三日壬寅。晴。出東軒。", "13일 임인. 새벽에 배를 출발했다.")[1] == "새벽에 배를 출발했다."
+    # 실제 날씨 표현은 건너뛴다
+    for w_o, w_k in [("陰而不雨", "흐리고 비는 오지 않았다."), ("朝陰晩晴", "아침은 흐리고 저녁은 맑았다."),
+                     ("雨下如注", "비가 쏟아지듯 내렸다."), ("晴且無風", "맑고 바람이 없다."), ("風雨大作", "큰 바람과 비가 불었다.")]:
+        assert card(f"十三日壬寅。{w_o}。出東軒。", f"13일 임인. {w_k} 동헌에 나갔다.") == ("出東軒。", "동헌에 나갔다."), w_o
+
+
+def test_card_preserves_original_punctuation_and_handles_translation_without_spaces_or_with_newlines():
+    assert card("十三日壬寅。晴。出東軒公事", "13일 임인. 맑다. 동헌에 나갔다.")[0] == "出東軒公事"          # 없던 '。'를 붙이지 않는다
+    assert card("十三日壬寅。晴。出東軒。", "13일 임인.맑다.동헌에 나갔다.")[1] == "동헌에 나갔다."          # 공백 없는 문장
+    nl = chr(10)
+    assert card("十三日壬寅。晴。出東軒。", "13일 임인。" + nl + "맑다。" + nl + "동헌에 나갔다。")[1] == "동헌에 나갔다。"   # 。와 줄바꿈
+    assert card("十三日壬寅。晴。出東軒。", "13일 임인. 맑다. 값이 3.5냥이었다.")[1] == "값이 3.5냥이었다."     # 소수점은 경계가 아니다

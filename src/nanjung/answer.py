@@ -91,28 +91,55 @@ def _first_sentence(text: str) -> str:
 # ---- 출처 카드: 날짜·간지 머리 문장과 날씨 문장을 건너뛰고 내용 문장을 보여 준다 ----
 CARD_MIN_CONTENT = 14      # 내용이 이만큼 모일 때까지 문장을 이어 붙인다(너무 짧은 한 문장으로 끝나지 않게)
 CARD_MAX_WEATHER_SKIP = 2  # 머리 문장 뒤에서 건너뛰는 날씨 문장 수
-HEADER_O_RE = re.compile(r"^[初二三十一]*[一二三四五六七八九十]?日")
-HEADER_K_RE = re.compile(r"^(?:\d{1,2}일|초[가-힣]+(?:\s날)?)")
-GANJI_K_RE = re.compile(r"[갑을병정무기경신임계][자축인묘진사오미신유술해]")
-WEATHER_O = set("晴陰雨雪風霧雷霰曇雲霽")
-WEATHER_K_RE = re.compile(r"맑|흐[리렸림]|비가|눈이|바람|안개|구름|날씨|쌀쌀|따뜻|춥|덥|개었|갰")
+GAN_O = "甲乙丙丁戊己庚辛壬癸"
+JI_O = "子丑寅卯辰巳午未申酉戌亥"
+# 머리 문장 = 날짜(+간지, +결락 표기)만 있는 문장. '十四日出戰'·'十一日乙酉冬至'처럼 사건·절기가 붙은 문장은 머리가 아니다.
+HEADER_O_RE = re.compile(rf"^[初二三十一]*[一二三四五六七八九十]?日(?:[{GAN_O}][{JI_O}]|干支)?缺?$")
+HEADER_K_RE = re.compile(r"^(?:\d{1,2}일|초[가-힣]+(?:\s날)?)"
+                         r"(?:\s+(?:[갑을병정무기경신임계][자축인묘진사오미신유술해]|간지)(?:일|날)?)?(?:\s*(?:빠짐|없음|결락))?(?:이다)?[.。]?$")
+# 날씨 문장 = 확인된 날씨 표현만으로 이루어진 문장. 날씨 글자가 들어 있다고(申霽雲, 風折船) 날씨로 보지 않는다.
+WEATHER_O_CHARS = set("晴陰雨雪風霧雷霰雲曇霽灑而不且無或乍朝晩暮夕夜終日大小細微暫作勢下如注溫暖和靜順缺又亦竟達止收息起極惡甚色")
+WEATHER_O_CORE = set("晴陰雨雪風霧雷霰雲曇霽灑")
+_TIME_K = r"(?:아침|저녁|저녁때|새벽|밤|낮|오전|오후|종일|온종일|하루|하루종일|잠깐|잠시|처음으로|한때)(?:에|은|는|까지|부터)?"
+_WEATHER_K = (r"(?:날씨[가는]|맑[가-힣]*|흐[가-힣]*|비[가는와]?|눈[이과]?|바람[이과]?|큰|가는|소나기[가는]?|북풍[이은]?|빗[가-힣]*|"
+              r"천둥[가-힣]*|번개[가-힣]*|안개[가-힣]*|구름[가-힣]*|개[지다었]?[가-힣]*|섞여|섞인|연기|따뜻[가-힣]*|춥[가-힣]*|덥[가-힣]*|"
+              r"쌀쌀[가-힣]*|서늘[가-힣]*|잔잔[가-힣]*|없[가-힣]*|않[가-힣]*|내[렸린리][가-힣]*|오[다고는면]?[가-힣]*|분다|한다|하다|"
+              r"불[었어][가-힣]*|쏟[가-힣]*|퍼[붓부][가-힣]*|많이|크게|계속|조금|약하게)")
+WEATHER_K_TOKEN_RE = re.compile(rf"^(?:{_TIME_K}|{_WEATHER_K})$")
+WEATHER_K_CORE_RE = re.compile(r"^(?:날씨|맑|흐|비[가는와]?$|눈[이과]?$|바람|소나기|북풍|빗|안개|구름|천둥|번개|개[지다었]|따뜻|춥|덥|쌀쌀|서늘)")
+WEATHER_MAX_LEN = 20
 
 
 def _is_header_o(sentence: str) -> bool:
-    body = sentence.rstrip("。")
-    return bool(HEADER_O_RE.match(body)) and len(body) <= 8       # 二十四日干支缺到柚島結陣처럼 내용이 붙은 건 머리가 아니다
+    return bool(HEADER_O_RE.match(sentence.rstrip("。").strip()))
 
 
 def _is_header_k(sentence: str) -> bool:
-    return bool(HEADER_K_RE.match(sentence)) and (bool(GANJI_K_RE.search(sentence)) or len(sentence) <= 8)
+    return bool(HEADER_K_RE.match(sentence.strip()))
 
 
 def _is_weather_o(sentence: str) -> bool:
-    return len(sentence) <= 10 and any(c in WEATHER_O for c in sentence)
+    body = sentence.rstrip("。").strip()
+    return 0 < len(body) <= 10 and set(body) <= WEATHER_O_CHARS and bool(set(body) & WEATHER_O_CORE)
 
 
 def _is_weather_k(sentence: str) -> bool:
-    return len(sentence) <= 10 and bool(WEATHER_K_RE.search(sentence))
+    body = sentence.strip().rstrip(".。!?").strip()
+    if not body or len(body) > WEATHER_MAX_LEN:
+        return False
+    tokens = body.split()
+    return all(WEATHER_K_TOKEN_RE.match(t) for t in tokens) and any(WEATHER_K_CORE_RE.match(t) for t in tokens)
+
+
+def _split_original(text: str) -> list[str]:
+    """'。'로 나누되 원문의 표점을 그대로 둔다(끝에 '。'가 없으면 붙이지 않는다)."""
+    return [s for s in (m.group(0).strip() for m in re.finditer(r"[^。]+(?:。|$)", text)) if s]
+
+
+def _split_translation(text: str) -> list[str]:
+    """번역 문장 나누기: 마침표 뒤 공백·줄바꿈·공백 없이 이어진 한글. 3.5 같은 소수점은 경계가 아니다."""
+    parts = re.split(r"(?<=[.!?。])\s+|(?<=[.!?。])(?=[가-힣])|\n+", text.strip())
+    return [p.strip() for p in parts if p and p.strip()]
 
 
 def _clip(text: str) -> str:
@@ -145,8 +172,8 @@ def _card_line(sentences: list[str], is_header, is_weather, joiner: str) -> str:
 
 def source_card(h: Hit) -> dict:
     e = h.entry
-    original = [x + "。" for x in e.original.split("。") if x.strip()]
-    translation = [x.strip() for x in re.split(r"(?<=[.!?])\s+", e.translation.strip()) if x.strip()]
+    original = _split_original(e.original)
+    translation = _split_translation(e.translation)
     return {"id": e.id, "label": e.label,
             "original_line": _card_line(original, _is_header_o, _is_weather_o, ""),
             "translation_line": _card_line(translation, _is_header_k, _is_weather_k, " "),
