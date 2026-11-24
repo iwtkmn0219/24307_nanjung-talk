@@ -185,3 +185,19 @@ def test_stats_reports_count_emotions_and_suspicious_terms(fakes):
     fdb.stats = lambda conn: {"count": 3, "emotions": {"일상": 2, "비통": 1}, "pig_in_son_entries": ["1597-10-14"]}
     assert ingest.lambda_handler({"action": "stats"}, None) == {
         "count": 3, "emotions": {"일상": 2, "비통": 1}, "pig_in_son_entries": ["1597-10-14"]}
+
+
+def test_diag_reports_resolution_and_similarities(fakes, monkeypatch):
+    _, br, fdb, _ = fakes({})
+    from nanjung.models import Hit
+    calls = []
+
+    def search(conn, qvec, k=5, date_ids=None):
+        calls.append(date_ids)
+        return [Hit(DiaryEntry("S", "壬辰", 1592, 4, False, 13, "壬寅", "x", id="1597-09-16", emotion="일상"), 0.42)]
+    fdb.search = search
+    fdb.neighbor = lambda conn, i, d: None
+    out = ingest.lambda_handler({"action": "diag", "message": "명량 때 어땠어요?"}, None)
+    assert out["date_ids"] == ["1597-09-16"]
+    assert out["date_hits"] == [["1597-09-16", 0.42]] and out["general_hits"][0] == ["1597-09-16", 0.42]
+    assert calls == [["1597-09-16"], None]

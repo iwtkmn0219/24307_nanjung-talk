@@ -94,6 +94,18 @@ def _build_today_map() -> dict:
     return {"count": len(m)}
 
 
+def _diag(message: str) -> dict:
+    """운영 점검용: 질문 하나의 날짜 해석과 날짜 검색·일반 검색 상위 유사도를 돌려준다."""
+    from ..date_resolver import resolve
+    conn = get_conn()
+    date_ids = resolve(message, [], lambda i, d: db.neighbor(conn, i, d))
+    qvec = embed(message)
+    fmt = lambda hits: [[h.entry.id, round(h.similarity, 4)] for h in hits]  # noqa: E731
+    return {"date_ids": date_ids,
+            "date_hits": fmt(db.search(conn, qvec, k=5, date_ids=date_ids)) if date_ids else [],
+            "general_hits": fmt(db.search(conn, qvec, k=5))}
+
+
 def lambda_handler(event, context):
     action = event.get("action")
     if action == "init_schema":
@@ -105,4 +117,6 @@ def lambda_handler(event, context):
         return _build_today_map()
     if action == "stats":
         return db.stats(get_conn())
+    if action == "diag":
+        return _diag(event["message"])
     raise ValueError(f"알 수 없는 action: {action!r}")
