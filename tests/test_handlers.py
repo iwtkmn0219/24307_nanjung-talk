@@ -35,9 +35,12 @@ class FakeDB:
         return [self.entries[i] for i in ids if i in self.entries]
 
 
+API_CLIENT = object()
+
+
 class Recorder:
     def __init__(self):
-        self.answer_calls, self.quota_calls = [], []
+        self.answer_calls, self.quota_calls, self.clients = [], [], []
 
 
 @pytest.fixture
@@ -56,13 +59,17 @@ def env(monkeypatch):
             return quota_ok
         monkeypatch.setattr(chat, "allow", allow)
 
-        def embed(text):
+        monkeypatch.setattr(chat, "api_client", lambda: API_CLIENT)
+
+        def embed(text, client=None):
+            rec.clients.append(("embed", client))
             if embed_exc:
                 raise embed_exc
             return [0.0] * 1024
         monkeypatch.setattr(chat, "embed", embed)
 
-        def answer(message, hits, history, mode):
+        def answer(message, hits, history, mode, client=None):
+            rec.clients.append(("answer", client))
             if answer_exc:
                 raise answer_exc
             rec.answer_calls.append((message, hits, history, mode))
@@ -139,6 +146,12 @@ def test_chat_normal_flow(env):
     assert status == 200 and out["answer"] == "그랬소." and out["mode"] == "normal"
     assert fdb.search_calls == [(5, None)]
     assert rec.answer_calls[0][2] == [{"role": "user", "content": "앞"}]
+
+
+def test_chat_uses_api_bedrock_client(env):
+    _, rec = env()
+    call(ev(body()))
+    assert rec.clients == [("embed", API_CLIENT), ("answer", API_CLIENT)]
 
 
 def test_chat_uses_resolved_dates(env):
@@ -244,3 +257,32 @@ def test_diary_accepts_0229(denv):
 def test_diary_404_when_map_missing(denv):
     denv({}, {})
     assert dcall({"md": "05-23"})[0] == 404
+
+
+def test_modern_question_survives_bedrock_outage(env, monkeypatch):
+    import nanjung.answer as real
+    env(embed_exc=BedrockUnavailable("throttled"))
+    monkeypatch.setattr(chat, "answer", real.answer)
+    status, out = call(ev(body("요즘 일본이랑 사이 어때요?")))
+    assert status == 200 and out["mode"] == "modern"
+    assert out["answer"].startswith("후대의 일은 모르오.") and out["suggestions"] == []
+
+
+def test_modern_question_survives_db_outage(env, monkeypatch):
+    import nanjung.answer as real
+    env()
+    monkeypatch.setattr(chat, "answer", real.answer)
+
+    def boom():
+        raise OSError("db down")
+    monkeypatch.setattr(chat, "get_conn", boom)
+    status, out = call(ev(body("요즘 일본이랑 사이 어때요?")))
+    assert status == 200 and out["mode"] == "modern" and out["suggestions"] == []
+
+
+def test_modern_question_uses_search_for_suggestions_when_healthy(env, monkeypatch):
+    import nanjung.answer as real
+    fdb, _ = env(FakeDB({None: [Hit(entry(), 0.9)]}))
+    monkeypatch.setattr(chat, "answer", real.answer)
+    _, out = call(ev(body("요즘 일본이랑 사이 어때요?")))
+    assert out["suggestions"] == ["q1", "q2", "q3"] and fdb.search_calls == [(5, None)]

@@ -13,6 +13,7 @@ COLUMNS = ("id", "source_id", "ganji_year", "lunar_year", "lunar_month", "is_lea
            "emotion", "intro", "questions")
 _COLS = ", ".join(COLUMNS)
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
+CONNECT_TIMEOUT = 5
 
 
 def ssl_context() -> ssl.SSLContext:
@@ -27,7 +28,7 @@ def connect():
         host=os.environ["DB_HOST"], database=os.environ["DB_NAME"],
         user=os.environ["DB_USER"], password=os.environ["DB_PASSWORD"],
         port=int(os.environ.get("DB_PORT", "5432")), ssl_context=ssl_context(),
-        timeout=10)
+        timeout=CONNECT_TIMEOUT)
 
 
 def init_schema(conn) -> None:

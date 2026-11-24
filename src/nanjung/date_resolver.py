@@ -14,14 +14,19 @@ GANJI_YEARS = {"임진": 1592, "계사": 1593, "갑오": 1594, "을미": 1595, "
 GANJI_DATE_RE = re.compile(r"(임진|계사|갑오|을미|병신|정유|무술)년\s*(윤)?(\d{1,2})월\s*(\d{1,2})일")
 YEAR_DATE_RE = re.compile(r"(159[2-8])년\s*(윤)?(\d{1,2})월\s*(\d{1,2})일")
 
+# '면'·'마지막'은 흔한 글자라 아들 이름(앞뒤가 한글이 아닌 독립된 '면' + 조사)과 구체 표현만 인정한다.
+MYEON_RE = re.compile(r"(?:^|[^가-힣])면(?:이|의|은|을|과|이가)?(?=[^가-힣]|$)")
+LAST_RE = re.compile(r"마지막\s*(?:일기|날|기록|전투|싸움|해전)")
+DEATH_WORDS = ("전사", "죽", "잃")
+
 # (판정 함수, 일기 id). 위에서부터 먼저 맞는 것을 쓴다.
 EVENTS: list[tuple[Callable[[str], bool], str]] = [
     (lambda m: "명량" in m, "1597-09-16"),
     (lambda m: "임진왜란" in m or "왜란 터진" in m, "1592-04-13"),
     (lambda m: ("어머니" in m or "어머님" in m) and any(w in m for w in ("돌아가", "별세", "부고")), "1597-04-13"),
-    (lambda m: "면" in m and any(w in m for w in ("전사", "죽")), "1597-10-14"),
+    (lambda m: (MYEON_RE.search(m) or "아들" in m) and any(w in m for w in DEATH_WORDS), "1597-10-14"),
     (lambda m: any(w in m for w in ("백의종군", "출옥", "감옥")), "1597-04-01"),
-    (lambda m: "노량" in m or "마지막" in m, "1598-11-17"),
+    (lambda m: "노량" in m or bool(LAST_RE.search(m)), "1598-11-17"),
 ]
 
 
@@ -56,14 +61,11 @@ def _explicit(message: str) -> str | None:
 
 def resolve(message: str, last_source_ids: list[str], neighbor_fn: NeighborFn) -> list[str] | None:
     direction = _direction(message)
-    event = _event(message)
+    target = _explicit(message) or _event(message)  # 명시 날짜가 사건 사전보다 우선
     if direction:
-        anchor = event or _explicit(message) or (last_source_ids[0] if last_source_ids else None)
+        anchor = target or (last_source_ids[0] if last_source_ids else None)
         if anchor is None:
             return None
         nid = neighbor_fn(anchor, direction)
         return [nid] if nid else None
-    if event:
-        return [event]
-    explicit = _explicit(message)
-    return [explicit] if explicit else None
+    return [target] if target else None

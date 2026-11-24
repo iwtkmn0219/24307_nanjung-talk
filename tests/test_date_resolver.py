@@ -55,6 +55,9 @@ def test_previous_day_variants(msg):
     ("감옥에서 나오셨을 때", "1597-04-01"),
     ("노량 해전", "1598-11-17"),
     ("마지막 일기", "1598-11-17"),
+    ("마지막 날 일기", "1598-11-17"),
+    ("면의 죽음", "1597-10-14"),
+    ("아들이 죽었다는 소식", "1597-10-14"),
 ])
 def test_event_dictionary(msg, expected):
     assert r(msg) == [expected]
@@ -66,8 +69,14 @@ def test_explicit_dates():
     assert r("임진년 4월13일") == ["1592-04-13"]
 
 
-def test_event_beats_explicit_date():
-    assert r("명량 말고 정유년 9월 1일") == ["1597-09-16"]  # 사전이 명시 날짜보다 먼저
+def test_explicit_date_beats_event():
+    assert r("명량 말고 정유년 9월 1일") == ["1597-09-01"]
+    assert r("정유년 9월 16일 일기를 마지막으로 보여 주시오") == ["1597-09-16"]
+
+
+@pytest.mark.parametrize("msg", ["그러면 죽을 뻔했소?", "마지막으로 묻겠소", "라면 먹다 죽는 줄", "마지막 질문이오"])
+def test_common_words_are_not_events(msg):
+    assert r(msg) is None
 
 
 def test_plain_question():

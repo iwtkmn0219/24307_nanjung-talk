@@ -33,8 +33,12 @@ NORMAL_STYLE = "- 가볍고 친근하게 답하시오. 이모지 하나까지 �
 SENTENCE_RE = re.compile(r"^.*?[.!?。](?=\s|$)|^.*?[.!?。]", re.S)
 
 
+def is_modern(message: str) -> bool:
+    return any(m in message for m in MODERN_MARKERS)
+
+
 def decide_mode(message: str, hits: list[Hit], threshold: float, date_matched: bool) -> Mode:
-    if any(m in message for m in MODERN_MARKERS):
+    if is_modern(message):
         return "modern"
     if not hits:
         return "out_of_scope"

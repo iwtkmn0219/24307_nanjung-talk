@@ -3,13 +3,14 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 import uuid
 from datetime import datetime
 
 from .. import db
-from ..answer import answer, decide_mode
-from ..bedrock import BedrockUnavailable, embed
+from ..answer import answer, decide_mode, is_modern
+from ..bedrock import BedrockUnavailable, api_client, embed
 from ..date_resolver import resolve
 from ..quota import KST, allow
 from .common import response, shared_conn
@@ -20,6 +21,7 @@ MAX_MESSAGE = 300
 MAX_HISTORY_ITEMS = 50
 MAX_SOURCE_IDS = 10
 SEARCH_K = 5
+log = logging.getLogger(__name__)
 
 
 class BadRequest(Exception):
@@ -70,6 +72,16 @@ def _body(event) -> tuple[str, list, list[str]]:
     return message.strip(), history[-MAX_HISTORY_ITEMS:], ids[:MAX_SOURCE_IDS]
 
 
+def _modern(message: str) -> dict:
+    """현대 질문은 LLM 없이 고정 답변. 추천 질문용 검색이 실패해도 고정 답변은 돌려준다."""
+    try:
+        hits = db.search(get_conn(), embed(message, client=api_client()), k=SEARCH_K)
+    except Exception:
+        log.warning("현대 질문 추천 검색 실패", exc_info=True)
+        hits = []
+    return answer(message, hits, [], "modern")
+
+
 def lambda_handler(event, context):
     try:
         client_id = _client_id(event)
@@ -80,15 +92,18 @@ def lambda_handler(event, context):
     if not allow(usage_table(), client_id, now_kst(), int(os.environ.get("DAILY_LIMIT", "20"))):
         return response(429, {"answer": MSG_LIMIT})
 
+    if is_modern(message):
+        return response(200, _modern(message))
+
     conn = get_conn()
     try:
         date_ids = resolve(message, last_ids, lambda i, d: db.neighbor(conn, i, d))
-        qvec = embed(message)
+        qvec = embed(message, client=api_client())
         hits = db.search(conn, qvec, k=SEARCH_K, date_ids=date_ids) if date_ids else []
         date_matched = bool(hits)
         if not hits:
             hits = db.search(conn, qvec, k=SEARCH_K)
         mode = decide_mode(message, hits, float(os.environ.get("SIM_THRESHOLD", "0.30")), date_matched)
-        return response(200, answer(message, hits, history, mode))
+        return response(200, answer(message, hits, history, mode, client=api_client()))
     except BedrockUnavailable:
         return response(503, {"answer": MSG_UNAVAILABLE})

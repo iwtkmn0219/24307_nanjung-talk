@@ -29,6 +29,13 @@ Parameters:
   AllowedOrigin:
     Type: String
     Default: http://localhost:5500
+  IngestReservedConcurrency:
+    Type: Number
+    Default: 0
+    Description: 0이면 예약하지 않는다(동시성 한도 10인 신규 계정 기본값). 한도가 충분할 때만 2 등으로 올린다.
+
+Conditions:
+  ReserveIngest: !Not [!Equals [!Ref IngestReservedConcurrency, 0]]
 
 Globals:
   Function:
@@ -64,7 +71,7 @@ Resources:
       Handler: nanjung.handlers.ingest.lambda_handler
       MemorySize: 512
       Timeout: 900
-      ReservedConcurrentExecutions: 2
+      ReservedConcurrentExecutions: !If [ReserveIngest, !Ref IngestReservedConcurrency, !Ref AWS::NoValue]
       Environment:
         Variables:
           DATA_BUCKET: !Ref DataBucket

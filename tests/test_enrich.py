@@ -122,3 +122,34 @@ def test_embed_request_shape():
     assert len(v) == 1024
     assert c.kwargs["modelId"] == "amazon.titan-embed-text-v2:0"
     assert json.loads(c.kwargs["body"]) == {"inputText": "맑음", "dimensions": 1024, "normalize": True}
+
+
+def test_model_timeout_is_unavailable_for_both_calls():
+    c = RaisingClient(client_error("ModelTimeoutException"))
+    with pytest.raises(BedrockUnavailable):
+        bedrock.converse("s", [], 10, 0.1, client=c)
+    with pytest.raises(BedrockUnavailable):
+        bedrock.embed("x", client=c)
+
+
+class SlowBody:
+    def read(self):
+        raise ReadTimeoutError(endpoint_url="https://x")
+
+
+class SlowStreamClient:
+    def invoke_model(self, **kw):
+        return {"body": SlowBody()}
+
+
+def test_embed_stream_read_timeout_is_unavailable():
+    with pytest.raises(BedrockUnavailable):
+        bedrock.embed("x", client=SlowStreamClient())
+
+
+def test_api_config_fits_in_lambda_timeout():
+    cfg = bedrock.API_CONFIG
+    assert cfg.retries["total_max_attempts"] == 1
+    from nanjung import db
+    worst = 2 * (cfg.connect_timeout + cfg.read_timeout) + db.CONNECT_TIMEOUT
+    assert worst < 29  # embed + converse + DB 연결이 API Gateway/Lambda 29초 안에 끝나야 한다
