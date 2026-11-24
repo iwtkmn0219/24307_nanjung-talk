@@ -169,3 +169,8 @@ def test_prompt_glossary_mother():
 def test_intro_up_to_60_is_accepted():
     # 프롬프트는 40자를 요구하지만, 조금 넘긴 소개 때문에 하루치 적재가 실패하지 않게 60자까지 받는다
     assert parse_response(json.dumps({**GOOD, "intro": "가" * 60}, ensure_ascii=False))["intro"] == "가" * 60
+
+
+def test_prompt_glossary_son():
+    system, _ = build_prompt(entry())
+    assert "豚" in system and "아들" in system  # 豚薈 → 아들 회 (돼지로 옮기지 않게)
