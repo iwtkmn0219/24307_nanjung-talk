@@ -62,28 +62,53 @@ def pretendard() -> str:
         for n, w in PRETENDARD_WEIGHTS.items())
 
 
-def noto() -> str:
-    out_dir = FONTS / "noto-serif-kr"
+UNICODE_RE = re.compile(r"unicode-range:\s*([^;]+);")
+
+
+def noto_css(css: str, out_dir: Path, fetch=_get) -> str:
+    """Google Fonts CSS → 조각 파일을 내용 해시 이름으로 한 번만 저장하고 @font-face를 만든다.
+
+    Google은 가변 글꼴이라 400·700에 같은 파일을 준다. 같은 파일+같은 unicode-range면 규칙 하나에
+    font-weight: 400 700 범위로 선언해 브라우저가 한 번만 받게 한다. 이름이 내용 해시라
+    업스트림 순서가 바뀌어도 결과가 같다.
+    """
+    import hashlib
+
     out_dir.mkdir(parents=True, exist_ok=True)
-    css = _get(NOTO_CSS).decode("utf-8")
-    seq: dict[str, int] = {}
-    blocks = []
+    groups: dict[tuple[str, str], set[int]] = {}
     for body in BLOCK_RE.findall(css):
-        url = URL_RE.search(body)
-        weight = WEIGHT_RE.search(body)
-        if not url or not weight:
+        url, weight, urange = URL_RE.search(body), WEIGHT_RE.search(body), UNICODE_RE.search(body)
+        if not url or not weight or not urange:
             raise SystemExit("예상과 다른 Google Fonts CSS 형식")
-        w = weight.group(1)
-        seq[w] = seq.get(w, 0) + 1
-        name = f"{w}-{seq[w]:03d}.woff2"
+        data = fetch(url.group(1))
+        name = hashlib.sha256(data).hexdigest()[:16] + ".woff2"
         path = out_dir / name
         if not path.exists():
-            path.write_bytes(_get(url.group(1)))
-        body = URL_RE.sub(f"url('noto-serif-kr/{name}')", body)
-        if "font-display" not in body:
-            body += "  font-display: swap;\n"
-        blocks.append("@font-face {" + body + "}\n")
-    return "".join(blocks)
+            path.write_bytes(data)
+        groups.setdefault((name, urange.group(1).strip()), set()).add(int(weight.group(1)))
+    rules = []
+    for (name, urange), weights in sorted(groups.items(), key=lambda kv: (kv[0][1], kv[0][0])):
+        w = " ".join(str(x) for x in (sorted(weights) if len(weights) == 1 else (min(weights), max(weights))))
+        rules.append("".join(line + "\n" for line in (
+            "@font-face {",
+            "  font-family: 'Noto Serif KR';",
+            "  font-style: normal;",
+            f"  font-weight: {w};",
+            "  font-display: swap;",
+            f"  src: url('noto-serif-kr/{name}') format('woff2');",
+            f"  unicode-range: {urange};",
+            "}")))
+    return "".join(rules)
+
+
+def noto() -> str:
+    out_dir = FONTS / "noto-serif-kr"
+    css = noto_css(_get(NOTO_CSS).decode("utf-8"), out_dir)
+    used = set(re.findall(r"noto-serif-kr/([0-9a-f]{16}\.woff2)", css))
+    for old in out_dir.glob("*.woff2"):  # 이전 이름(굵기-순번)이나 더 이상 쓰지 않는 조각은 지운다
+        if old.name not in used:
+            old.unlink()
+    return css
 
 
 def main() -> None:
