@@ -97,8 +97,18 @@ def _explicit(message: str) -> str | None:
 TODAY_RE = re.compile(r"오늘의\s*(?:일기|장군)|오늘\s*일기|오늘\s*장군|오늘은?\s*어떠(?:셨|세요|십니|시)|년\s*전\s*오늘")
 
 
+# '오늘' + 과거 표현("과거의 오늘", "옛날 오늘은", "그 시절 오늘")이거나 장군께 묻는 과거형 존대("오늘 뭐 하셨어요?")면
+# 오늘의 일기를 묻는 말이다. '이맘때'는 '오늘' 없이도 그렇다. '오늘날'은 현대 표현이라 제외한다.
+TODAY_WORD_RE = re.compile(r"오늘(?!날)")
+PAST_RE = re.compile(r"과거|옛날|옛|그때|그\s*시절|당시")
+HONORIFIC_PAST_RE = re.compile(r"(?:하|계|있으|지내|보내|겪으)셨")
+THIS_TIME_RE = re.compile(r"이맘때")
+
+
 def is_today_question(message: str) -> bool:
-    return bool(TODAY_RE.search(message))
+    if TODAY_RE.search(message) or THIS_TIME_RE.search(message):
+        return True
+    return bool(TODAY_WORD_RE.search(message)) and bool(PAST_RE.search(message) or HONORIFIC_PAST_RE.search(message))
 
 
 def relative_direction(message: str) -> int:
