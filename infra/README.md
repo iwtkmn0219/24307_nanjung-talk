@@ -4,7 +4,7 @@
 
 ## 0. 계정 준비 (첫날)
 
-- [ ] AWS Budgets: 월 USD 40 비용 예산 + 이메일 알림(사용자 결정)
+- [x] AWS Budgets: 월 USD 40 비용 예산(`nanjung-monthly-40`) + 사용자 메일 알림(실제 80%, 예측 100%) — 사용자 결정
 - [ ] 이후 작업은 루트가 아닌 IAM 사용자로 한다
 - [ ] Bedrock 모델 접근 확인: `amazon.titan-embed-text-v2:0`, `global.anthropic.claude-haiku-4-5-20251001-v1:0`
 
