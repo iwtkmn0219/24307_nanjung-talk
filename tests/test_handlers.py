@@ -495,3 +495,58 @@ def test_today_lookup_failure_falls_back_to_general_search(env, monkeypatch):
     monkeypatch.setattr(chat, "today_table", lambda: (_ for _ in ()).throw(OSError("dynamodb down")))
     status, out = call(ev(body("오늘의 장군님은 어떠셨습니까")))
     assert status == 200 and fdb.search_calls == [(5, None)] and rec.focus == [None]
+
+
+# ---- 하루 한도 조사: 요청 1건은 어떤 경로로 끝나도 allow를 정확히 한 번만 부른다 ----
+@pytest.mark.parametrize("kwargs,message,allow_calls,refunds,status", [
+    ({}, "배 멀미 하셨어요?", 1, 0, 200),                                              # 일반 답
+    ({}, "요즘 정치 어때요?", 1, 0, 200),                                              # 현대 질문(LLM·검색 없음)
+    ({"embed_exc": BedrockUnavailable("x")}, "배 멀미 하셨어요?", 1, 1, 503),         # Bedrock 장애: 차감 1, 환불 1(순 0)
+    ({"answer_exc": BedrockUnavailable("x")}, "배 멀미 하셨어요?", 1, 1, 503),
+    ({"quota_ok": False}, "배 멀미 하셨어요?", 1, 0, 429),                            # 한도: 시도 1회, 환불 없음
+])
+def test_one_request_calls_allow_once_and_refund_only_on_503(env, kwargs, message, allow_calls, refunds, status):
+    _, rec = env(**kwargs)
+    assert call(ev(body(message)))[0] == status
+    assert len(rec.quota_calls) == allow_calls and len(rec.refunds) == refunds
+
+
+@pytest.mark.parametrize("bad", [body(""), body("가" * 301), "not json"])
+def test_invalid_requests_never_touch_the_quota(env, bad):
+    _, rec = env()
+    assert call(ev(bad))[0] == 400 and rec.quota_calls == [] and rec.refunds == []
+
+
+def test_today_lookup_path_still_calls_allow_once(env, monkeypatch):
+    items = {"12-01": {"md": "12-01", "ids": ["x-a"], "exact": True}}
+    _, rec = _today_env(env, monkeypatch, items, results={("x-a",): [Hit(entry("x-a"), 0.1)]})
+    call(ev(body("오늘의 장군님은 어떠셨습니까")))
+    assert len(rec.quota_calls) == 1 and rec.refunds == []
+
+
+def test_net_count_after_503_is_zero_with_the_real_quota_functions():
+    """실제 allow/refund로 확인: 503이면 차감 1 + 환불 1 = 순 0, 환불이 카운트를 늘리지 않는다."""
+    import boto3
+    from moto import mock_aws
+    from nanjung.quota import allow, refund
+    with mock_aws():
+        t = boto3.resource("dynamodb", region_name="ap-northeast-2").create_table(
+            TableName="U", BillingMode="PAY_PER_REQUEST", KeySchema=[{"AttributeName": "pk", "KeyType": "HASH"}],
+            AttributeDefinitions=[{"AttributeName": "pk", "AttributeType": "S"}])
+        now = datetime(2026, 12, 1, 12, 0, tzinfo=KST)
+        assert allow(t, "c", now, 20) and refund(t, "c", now)
+        assert t.get_item(Key={"pk": "c#2026-12-01"})["Item"]["cnt"] == 0
+        assert refund(t, "c", now) is False                       # 이미 0이면 더 내려가지도 올라가지도 않는다
+        assert t.get_item(Key={"pk": "c#2026-12-01"})["Item"]["cnt"] == 0
+
+
+def test_every_request_is_logged_with_a_short_client_id_and_status(env, caplog):
+    import logging
+    env()
+    with caplog.at_level(logging.INFO, logger="nanjung.handlers.chat"):
+        call(ev(body("배 멀미 하셨어요?")))
+        call(ev(body("")))
+    text = [r.getMessage() for r in caplog.records]
+    assert any("cid=00000000" in m and "status=200" in m for m in text)
+    assert any("status=400" in m for m in text)
+    assert not any(CID in m for m in text)                          # 전체 id는 로그에 남기지 않는다(앞 8자만)

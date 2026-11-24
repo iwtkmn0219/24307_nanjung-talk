@@ -36,6 +36,7 @@ DB_OP_S = float(db.CONNECT_TIMEOUT)                                         # pg
 DB_CONN_S = 2 * DB_OP_S                                                     # 헬스체크 + 재연결
 BEDROCK_CALL_S = API_CONFIG.connect_timeout + API_CONFIG.read_timeout       # embed·converse(재시도 없음)
 log = logging.getLogger(__name__)
+log.setLevel(logging.INFO)  # Lambda 기본(WARNING)에서는 요청 로그가 안 남으므로 이 로거만 INFO로
 
 
 class BadRequest(Exception):
@@ -134,7 +135,22 @@ def _modern(message: str) -> dict:
     return answer(message, [], [], "modern")
 
 
+def _cid8(event) -> str:
+    """로그용 클라이언트 id 앞 8자(전체 id는 남기지 않는다)."""
+    try:
+        return _client_id(event)[:8]
+    except Exception:
+        return "-"
+
+
 def lambda_handler(event, context):
+    """요청마다 한 줄 로그(앞 8자 id, 상태 코드)를 남겨, 하루 한도 같은 문제를 나중에 추적할 수 있게 한다."""
+    resp = _handle(event, context)
+    log.info("chat cid=%s status=%s", _cid8(event), resp["statusCode"])
+    return resp
+
+
+def _handle(event, context):
     try:
         client_id = _client_id(event)
         message, history, last_ids = _body(event)
