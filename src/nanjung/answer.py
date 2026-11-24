@@ -9,7 +9,11 @@ from .models import SOURCE_NOTE, Hit
 
 Mode = Literal["normal", "serious", "out_of_scope", "modern"]
 
-MODERN_MARKERS = ("요즘", "현대", "오늘날", "21세기", "대통령", "정당", "선거", "국회", "총리", "외교", "정치")
+# 단독으로 나와도 현대 질문
+MODERN_MARKERS = ("요즘", "현대", "오늘날", "21세기", "대통령", "정당", "선거", "국회", "총리")
+# 조선 당대에도 쓰는 말이라 시점 표현(요즘·현대·오늘날·지금)과 함께일 때만 현대 질문
+CONTEXT_MARKERS = ("정치", "외교")
+NOW_MARKERS = ("요즘", "현대", "오늘날", "지금")
 FIXED_OUT = "처음 듣는 말이라 내 답할 길이 없소."
 FIXED_MODERN = "후대의 일은 모르오."
 REDIRECT = "대신 내 일기 이야기를 들려주리다."
@@ -34,7 +38,9 @@ SENTENCE_RE = re.compile(r"^.*?[.!?。](?=\s|$)|^.*?[.!?。]", re.S)
 
 
 def is_modern(message: str) -> bool:
-    return any(m in message for m in MODERN_MARKERS)
+    if any(m in message for m in MODERN_MARKERS):
+        return True
+    return any(m in message for m in CONTEXT_MARKERS) and any(n in message for n in NOW_MARKERS)
 
 
 def decide_mode(message: str, hits: list[Hit], threshold: float, date_matched: bool) -> Mode:

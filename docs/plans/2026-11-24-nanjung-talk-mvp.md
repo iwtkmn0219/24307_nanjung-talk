@@ -28,7 +28,7 @@
 - 로그인은 없다. 브라우저별 `X-Client-Id`(UUID)를 기준으로 하루(KST) 질문 횟수를 `DAILY_LIMIT=20`으로 제한한다.
 - 모델 출력과 원문은 프론트에서 `textContent`로만 넣는다. `innerHTML`은 쓰지 않는다.
 - DB 비밀번호는 SAM 파라미터(`NoEcho`) → Lambda 환경변수로 넘긴다. Secrets Manager는 엔드포인트 비용 때문에 쓰지 않는다.
-- AWS 계정은 개인 루트 계정이다. 첫날 AWS Budgets 알림(월 USD 20)을 만들고, 이후 작업은 IAM 사용자로 한다.
+- AWS 계정은 개인 루트 계정이다. 첫날 AWS Budgets 알림(월 USD 40(사용자 결정))을 만들고, 이후 작업은 IAM 사용자로 한다.
 
 ## Review Focus
 
@@ -334,10 +334,10 @@ def test_pick_rotates_by_year(): assert pick({"ids":["a","b"]}, 2026) == "a"
 `infra/README.md`에 적을 콘솔 작업(값 고정):
 - VPC `nanjung-vpc` 10.0.0.0/16, 프라이빗 서브넷 2개(2a, 2c). NAT는 만들지 않는다.
 - 보안 그룹: `sg-lambda`(아웃바운드 전체), `sg-rds`(5432는 sg-lambda에서만), `sg-endpoint`(443은 sg-lambda에서만)
-- VPC 엔드포인트: `com.amazonaws.ap-northeast-2.bedrock-runtime`(Interface, Private DNS 켬, sg-endpoint), `s3`·`dynamodb`(Gateway, 프라이빗 라우팅 테이블)
+- VPC 엔드포인트: `com.amazonaws.ap-northeast-2.bedrock-runtime`(Interface, Private DNS 켬, sg-endpoint, **AZ 1개(2a 서브넷)만** — 비용 절감, 사용자 결정), `s3`·`dynamodb`(Gateway, 프라이빗 라우팅 테이블)
 - RDS PostgreSQL 16, `db.t4g.micro`, 20GB, 퍼블릭 액세스 끔, 자동 백업 7일, DB 이름 `nanjung`
 - S3 버킷 `nanjung-data-<계정ID>`(`raw/`, `processed/`)
-- AWS Budgets 월 USD 20 알림
+- AWS Budgets 월 USD 40 알림(사용자 결정)
 
 `template.yaml`(이 Task 범위):
 - `IngestFunction`: python3.12, 512MB, timeout 900, VPC 설정, `ReservedConcurrentExecutions: 2`
@@ -417,13 +417,14 @@ def test_plain_question(): assert r("배 멀미 하셨어요?") is None
 **Interfaces:**
 - Consumes: `Hit`, `SOURCE_NOTE`, `bedrock.converse`
 - Produces:
-  - `MODERN_MARKERS = ("요즘","현대","오늘날","21세기","대통령","정당","선거","국회","총리","외교","정치")`
+  - `MODERN_MARKERS = ("요즘","현대","오늘날","21세기","대통령","정당","선거","국회","총리")`: 단독으로도 modern
+  - `CONTEXT_MARKERS = ("정치","외교")`: `NOW_MARKERS = ("요즘","현대","오늘날","지금")` 중 하나와 함께일 때만 modern(사용자 결정. "조선 조정의 정치"는 modern 아님)
   - `decide_mode(message: str, hits: list[Hit], threshold: float, date_matched: bool) -> Literal["normal","serious","out_of_scope","modern"]`
   - `answer(message: str, hits: list[Hit], history: list[dict], mode: str, client=None) -> dict`: 키는 `answer`, `mode`, `sources`, `suggestions`
   - `source_card(h: Hit) -> dict`: 키는 `id`, `label`, `original_line`(원문 첫 문장, 。 기준, 최대 60자), `translation_line`(번역 첫 문장), `note`(SOURCE_NOTE)
 
 모드 결정(이 순서):
-1. 메시지에 MODERN_MARKERS가 하나라도 있으면 `modern`
+1. 메시지에 MODERN_MARKERS가 있거나, CONTEXT_MARKERS와 NOW_MARKERS가 함께 있으면 `modern`
 2. `date_matched`가 False이고 최고 유사도 < threshold이면 `out_of_scope`
 3. 상위 3개 근거 중 `emotion == "비통"`이 있으면 `serious`
 4. 나머지는 `normal`

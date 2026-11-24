@@ -48,3 +48,15 @@ def test_collect_writes_html_and_index_with_delay(monkeypatch, tmp_path):
     idx = json.loads((tmp_path / "raw" / "index.json").read_text(encoding="utf-8"))
     assert len(idx) == 8
     assert (tmp_path / "raw" / "ITKC_MO_0232A_0080_010_0010.html").exists()
+
+
+def test_interrupted_write_leaves_no_partial_html(monkeypatch, tmp_path):
+    monkeypatch.setenv("NANJUNG_CONTACT_EMAIL", "x@example.com")
+    monkeypatch.setattr(collect_mod.time, "sleep", lambda s: None)
+
+    def crash(*a, **kw):
+        raise KeyboardInterrupt
+    monkeypatch.setattr(collect_mod.os, "replace", crash)
+    with pytest.raises(KeyboardInterrupt):
+        collect_mod.collect(tmp_path, session=FakeSession())
+    assert list((tmp_path / "raw").glob("*.html")) == []

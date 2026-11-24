@@ -4,7 +4,7 @@ import boto3
 import pytest
 from moto import mock_aws
 
-from nanjung.quota import KST, allow
+from nanjung.quota import KST, allow, refund
 
 
 @pytest.fixture
@@ -56,3 +56,24 @@ def test_expires_at_is_day_after_next_kst_midnight(table):
     allow(table, "c1", datetime(2026, 12, 1, 9, 0, tzinfo=KST), 20)
     item = table.get_item(Key={"pk": "c1#2026-12-01"})["Item"]
     assert int(item["expires_at"]) == int(datetime(2026, 12, 3, 0, 0, tzinfo=KST).timestamp())
+
+
+def cnt(table, pk="c1#2026-12-01"):
+    return table.get_item(Key={"pk": pk})["Item"]["cnt"]
+
+
+def test_refund_gives_back_one(table):
+    t = datetime(2026, 12, 1, 12, 0, tzinfo=KST)
+    for _ in range(20):
+        allow(table, "c1", t, 20)
+    assert refund(table, "c1", t) is True and cnt(table) == 19
+    assert allow(table, "c1", t, 20) is True
+
+
+def test_refund_never_goes_negative(table):
+    t = datetime(2026, 12, 1, 12, 0, tzinfo=KST)
+    allow(table, "c1", t, 20)
+    assert refund(table, "c1", t) is True and refund(table, "c1", t) is False
+    assert cnt(table) == 0
+    assert refund(table, "nobody", t) is False
+    assert "Item" not in table.get_item(Key={"pk": "nobody#2026-12-01"})

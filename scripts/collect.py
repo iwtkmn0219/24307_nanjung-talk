@@ -46,6 +46,16 @@ def user_agent() -> str:
     return f"nanjungtalk-collector/1.0 (one-time research crawl; contact: {contact})"
 
 
+def _write_atomic(path: Path, text: str) -> None:
+    """임시 파일에 다 쓴 뒤 이름을 바꾼다. 중단돼도 일부만 쓴 파일이 path에 남지 않는다."""
+    tmp = path.with_name(path.name + ".part")
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 def collect(out_dir: Path, delay_s: float = 1.0, session=None) -> list[MonthRef]:
     import requests
 
@@ -68,9 +78,8 @@ def collect(out_dir: Path, delay_s: float = 1.0, session=None) -> list[MonthRef]
         path = raw / f"{ref.data_id}.html"
         if path.exists():  # 이미 받은 문서는 다시 요청하지 않는다
             continue
-        path.write_text(get(NODE_URL.format(data_id=ref.data_id)), encoding="utf-8")
-    (raw / "index.json").write_text(
-        json.dumps([asdict(r) for r in refs], ensure_ascii=False, indent=1), encoding="utf-8")
+        _write_atomic(path, get(NODE_URL.format(data_id=ref.data_id)))
+    _write_atomic(raw / "index.json", json.dumps([asdict(r) for r in refs], ensure_ascii=False, indent=1))
     return refs
 
 

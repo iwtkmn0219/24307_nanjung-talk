@@ -4,7 +4,7 @@
 
 ## 0. 계정 준비 (첫날)
 
-- [ ] AWS Budgets: 월 USD 20 비용 예산 + 이메일 알림
+- [ ] AWS Budgets: 월 USD 40 비용 예산 + 이메일 알림(사용자 결정)
 - [ ] 이후 작업은 루트가 아닌 IAM 사용자로 한다
 - [ ] Bedrock 모델 접근 확인: `amazon.titan-embed-text-v2:0`, `global.anthropic.claude-haiku-4-5-20251001-v1:0`
 
@@ -17,7 +17,7 @@
   - `sg-rds`: 인바운드 TCP 5432, 소스 `sg-lambda`만
   - `sg-endpoint`: 인바운드 TCP 443, 소스 `sg-lambda`만
 - [ ] VPC 엔드포인트
-  - `com.amazonaws.ap-northeast-2.bedrock-runtime`: Interface, Private DNS 켬, 서브넷 2개, `sg-endpoint`
+  - `com.amazonaws.ap-northeast-2.bedrock-runtime`: Interface, Private DNS 켬, **서브넷 1개(2a)만**(비용 절감, 사용자 결정. 2c의 Lambda도 Private DNS로 접근), `sg-endpoint`
   - `com.amazonaws.ap-northeast-2.s3`: Gateway, 프라이빗 라우팅 테이블
   - `com.amazonaws.ap-northeast-2.dynamodb`: Gateway, 프라이빗 라우팅 테이블
 

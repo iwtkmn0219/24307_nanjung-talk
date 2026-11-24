@@ -154,3 +154,14 @@ def test_history_sanitized_to_alternate_and_start_with_user(fake_client):
     assert roles[0] == "user" and roles[-1] == "user"
     assert all(a != b for a, b in zip(roles, roles[1:]))
     assert sent[-1]["content"][0]["text"] == "새 질문"
+
+
+@pytest.mark.parametrize("msg", ["조선 조정의 정치는 어땠소?", "명나라와의 외교는 어땠소?"])
+def test_politics_of_the_era_is_not_modern(msg):
+    assert decide_mode(msg, [hit(0.9)], 0.3, False) != "modern"
+
+
+@pytest.mark.parametrize("msg", ["요즘 정치 어때요?", "지금 외교 상황은?", "요즘 일본이랑 사이 어때요?",
+                                 "대통령 누구예요?", "21세기에 대해", "선거 결과는?"])
+def test_modern_markers(msg):
+    assert decide_mode(msg, [hit(0.9)], 0.3, False) == "modern"

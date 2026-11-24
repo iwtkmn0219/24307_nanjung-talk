@@ -58,6 +58,8 @@ def env(monkeypatch):
             rec.quota_calls.append((cid, limit))
             return quota_ok
         monkeypatch.setattr(chat, "allow", allow)
+        rec.refunds = []
+        monkeypatch.setattr(chat, "refund", lambda table, cid, now: rec.refunds.append(cid) or True)
 
         monkeypatch.setattr(chat, "api_client", lambda: API_CLIENT)
 
@@ -316,3 +318,73 @@ def test_slow_db_before_generation_skips_converse(env, monkeypatch):
 
 def test_request_budget_is_shorter_than_frontend_timeout():
     assert chat.REQUEST_BUDGET_S < 25  # 프론트 타이머(25초)보다 먼저 503으로 끝낸다
+
+
+def test_503_refunds_quota(env):
+    _, rec = env(embed_exc=BedrockUnavailable("throttled"))
+    assert call(ev(body()))[0] == 503 and rec.refunds == [CID]
+
+
+def test_success_does_not_refund(env):
+    _, rec = env()
+    assert call(ev(body()))[0] == 200 and rec.refunds == []
+
+
+def test_refund_failure_still_returns_503(env, monkeypatch):
+    env(embed_exc=BedrockUnavailable("throttled"))
+
+    def broken(*a):
+        raise RuntimeError("dynamodb down")
+    monkeypatch.setattr(chat, "refund", broken)
+    status, out = call(ev(body()))
+    assert status == 503 and out == {"answer": "잠시 숨을 고르겠소. 조금 뒤 다시 물어 주시오."}
+
+
+def test_refund_uses_same_day_as_charge(env, monkeypatch):
+    _, rec = env(embed_exc=BedrockUnavailable("x"))
+    times = iter([datetime(2026, 12, 1, 23, 59, 59, tzinfo=KST), datetime(2026, 12, 2, 0, 0, 1, tzinfo=KST)])
+    monkeypatch.setattr(chat, "now_kst", lambda: next(times))
+    seen = []
+    monkeypatch.setattr(chat, "allow", lambda t, c, now, l: seen.append(now) or True)
+    monkeypatch.setattr(chat, "refund", lambda t, c, now: seen.append(now) or True)
+    call(ev(body()))
+    assert seen[0] == seen[1]
+
+
+def _slow_env(env, monkeypatch, db=None):
+    """리뷰 재현: quota 8초 → DB 연결 3초 → embed 9.5초 → 검색 5초 (가상 시계)."""
+    fdb, rec = env(db)
+    clock = [0.0]
+    monkeypatch.setattr(chat, "monotonic", lambda: clock[0])
+
+    def step(sec, ret=None):
+        def f(*a, **kw):
+            clock[0] += sec
+            return ret() if callable(ret) else ret
+        return f
+    monkeypatch.setattr(chat, "allow", step(8, True))
+    monkeypatch.setattr(chat, "get_conn", step(3, object))
+    monkeypatch.setattr(chat, "embed", step(9.5, lambda: [0.0] * 1024))
+    real_search = fdb.search
+    fdb.search = lambda *a, **kw: (clock.__setitem__(0, clock[0] + 5), real_search(*a, **kw))[1]
+    return clock, fdb, rec
+
+
+def test_slow_steps_return_before_frontend_timeout(env, monkeypatch):
+    clock, _, rec = _slow_env(env, monkeypatch)
+    status, _ = call(ev(body()))
+    assert status == 503 and clock[0] < 25 and rec.answer_calls == []
+
+
+def test_slow_steps_modern_returns_fixed_answer_before_timeout(env, monkeypatch):
+    import nanjung.answer as real
+    clock, _, _ = _slow_env(env, monkeypatch)
+    monkeypatch.setattr(chat, "answer", real.answer)
+    status, out = call(ev(body("요즘 일본이랑 사이 어때요?")))
+    assert status == 200 and out["mode"] == "modern" and clock[0] < 25
+
+
+def test_no_time_left_touches_nothing(env):
+    _, rec = env()
+    r = chat.lambda_handler(ev(body()), Ctx(100))
+    assert r["statusCode"] == 503 and rec.quota_calls == [] and rec.refunds == []
