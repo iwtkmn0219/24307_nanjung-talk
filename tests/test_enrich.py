@@ -221,3 +221,15 @@ def test_parse_emotion_ignores_commentary_around_the_json():
     assert enrich_mod.parse_emotion('설명 먼저 {"emotion": "일상"} 뒤에 설명') == "일상"
     with pytest.raises(EnrichError):
         enrich_mod.parse_emotion('설명만 있고 {"emotion": "기쁨"}')
+
+
+def test_parse_emotion_two_different_values_is_ambiguous_but_same_value_twice_is_fine():
+    two = '예시 {"emotion": "일상"} 그리고 결론 {"emotion": "비통"}'
+    with pytest.raises(EnrichError):
+        enrich_mod.parse_emotion(two)
+    assert enrich_mod.parse_emotion('{"emotion": "비통"}\n설명... {"emotion": "비통"}') == "비통"
+
+
+def test_reclassify_retries_when_first_reply_is_ambiguous():
+    c = FakeConverseClient(['{"emotion":"일상"} 아니 {"emotion":"비통"}', '{"emotion":"비통"}'])
+    assert enrich_mod.reclassify("o", "t", client=c) == "비통" and c.calls == 2

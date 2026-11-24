@@ -96,14 +96,18 @@ EMOTION_JSON_RE = re.compile(r'\{\s*"emotion"\s*:\s*"[^"]*"\s*\}')
 
 def parse_emotion(text: str) -> str:
     # 모델이 JSON 뒤에 '분류 근거' 같은 설명을 덧붙이는 일이 있어, {"emotion": ...} 객체만 뽑는다
-    m = EMOTION_JSON_RE.search(text)
-    if not m:
+    found = EMOTION_JSON_RE.findall(text)
+    if not found:
         raise EnrichError(f"JSON 아님: {text[:80]!r}")
-    try:
-        data = json.loads(m.group(0))
-    except json.JSONDecodeError as ex:
-        raise EnrichError(f"JSON 아님: {text[:80]!r}") from ex
-    emo = data.get("emotion") if isinstance(data, dict) else None
+    values = set()
+    for obj in found:
+        try:
+            values.add(json.loads(obj).get("emotion"))
+        except json.JSONDecodeError as ex:
+            raise EnrichError(f"JSON 아님: {text[:80]!r}") from ex
+    if len(values) > 1:  # 예시와 결론이 섞여 앞의 값을 잘못 고를 수 있다 → 모호한 응답으로 보고 다시 묻는다
+        raise EnrichError(f"emotion이 둘 이상: {sorted(map(str, values))}")
+    emo = values.pop()
     if emo not in EMOTIONS:
         raise EnrichError(f"emotion 값 오류: {emo!r}")
     return emo

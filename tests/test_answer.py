@@ -258,3 +258,21 @@ def test_prompt_separates_unrecorded_topic_from_unrelated_topic():
     assert "일기에 적지 않아" in s and "당시" in s and "현대" in s
     refuse = s.index(NO_BASIS)
     assert s.index("일기에 적지 않아") != refuse
+
+
+def test_no_basis_phrase_after_leading_punctuation_is_still_detected():
+    for lead in ["…", "「", "“", "— ", "...", "『 "]:
+        r = answer("x", [hit(0.5, "비통")], [], "serious", client=FakeClient(reply=lead + NO_BASIS))
+        assert r["mode"] == "out_of_scope" and r["sources"] == [], lead
+
+
+def test_answer_starting_with_other_text_is_never_converted():
+    for reply in ["그날은 맑았소. " + NO_BASIS, "처음 듣는 이야기이오만, 그날은 맑았소.", "1. " + NO_BASIS]:
+        r = answer("x", [hit(0.5)], [], "normal", client=FakeClient(reply=reply))
+        assert r["mode"] == "normal", reply
+
+
+def test_prompt_quotes_the_refusal_phrase_instead_of_saying_above_phrase():
+    c = FakeClient()
+    answer("x", [hit(0.5)], [], "normal", client=c)
+    assert "위 문구" not in system_of(c)

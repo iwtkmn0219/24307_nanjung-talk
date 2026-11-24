@@ -106,6 +106,25 @@ def stats(conn) -> dict:
     return {"count": count, "emotions": emotions, "pig_in_son_entries": pig}
 
 
-def set_emotion(conn, entry_id: str, emotion: str) -> None:
-    """감정만 바꾼다(번역이 그대로라 임베딩은 다시 만들지 않는다)."""
-    conn.run("UPDATE diary SET emotion = :emotion WHERE id = :id", id=entry_id, emotion=emotion)
+def sync_emotions(conn, items: list[tuple[str, str, str]]) -> dict:
+    """items=(id, original, emotion). DB의 감정을 주어진 값에 맞춘다(번역이 그대로라 임베딩은 건드리지 않는다).
+
+    멱등이다: 이미 같은 행은 건드리지 않는다. DB에 없는 행(missing)과 원문이 달라 낡은 행(stale)은
+    갱신하지 않고 따로 돌려준다.
+    """
+    out: dict = {"updated": [], "missing": [], "stale": []}
+    if not items:
+        return out
+    rows = {r[0]: (r[1], r[2]) for r in conn.run(
+        "SELECT id, original, emotion FROM diary WHERE id = ANY(:ids)", ids=[i for i, _, _ in items])}
+    for entry_id, original, emotion in items:
+        cur = rows.get(entry_id)
+        if cur is None:
+            out["missing"].append(entry_id)
+        elif cur[0] != original:
+            out["stale"].append(entry_id)
+        elif cur[1] != emotion:
+            hit = conn.run("UPDATE diary SET emotion = :emotion WHERE id = :id AND original = :original RETURNING id",
+                           id=entry_id, original=original, emotion=emotion)
+            (out["updated"] if hit else out["missing"]).append(entry_id)
+    return out

@@ -11,7 +11,7 @@ from .. import db
 from ..bedrock import embed
 from ..dates import assign_dates
 from ..enrich import enrich, reclassify
-from ..models import MonthRef
+from ..models import EMOTIONS, MonthRef
 from ..parse import parse_month_page
 from ..today import build_today_map
 from .common import shared_conn
@@ -124,32 +124,57 @@ def _eval() -> dict:
             "out_dist": ev.distribution([r["sim"] for r in rows if r["expect"] == "out"])}
 
 
+def _validate_processed(data) -> None:
+    """모델·DB를 부르기 전에 월 캐시 모양을 확인한다(잘못된 객체로 일부만 바뀌는 일을 막는다)."""
+    if not isinstance(data, list) or not data:
+        raise ValueError("processed JSON은 비어 있지 않은 배열이어야 함")
+    seen = set()
+    for d in data:
+        if not isinstance(d, dict) or any(not isinstance(d.get(k), str) or not d[k]
+                                          for k in ("id", "original", "translation", "emotion")):
+            raise ValueError("항목에 id·original·translation·emotion 문자열이 없음")
+        if d["emotion"] not in EMOTIONS:
+            raise ValueError(f"감정 값 오류: {d['id']} {d['emotion']!r}")
+        if d["id"] in seen:
+            raise ValueError(f"중복 id: {d['id']}")
+        seen.add(d["id"])
+
+
 def _reclassify(key: str) -> dict:
-    """processed JSON의 '비통' 항목만 감정을 다시 분류해 JSON과 DB에 반영한다(번역·임베딩은 그대로)."""
-    if not (key.startswith("processed/") and key.endswith(".json")):
-        raise ValueError(f"processed/<data_id>.json 형식이 아님: {key!r}")
+    """processed JSON의 '비통' 항목만 감정을 다시 분류한다(번역·임베딩은 그대로).
+
+    확정 순서: (1) 모델 판정을 S3 processed JSON에 먼저 저장 — 이것이 기준이다.
+    (2) DB는 JSON의 최종 값에 맞추는 멱등 동기화. (2)가 실패해도 다시 실행하면 JSON 값으로 DB가 맞춰지고,
+    이미 확정된 항목은 모델에 다시 묻지 않는다. 같은 월에 ingest/reclassify를 동시에 돌리면 서로 덮을 수
+    있으므로 운영 스크립트는 순차로만 호출한다.
+    """
     s3 = s3_client()
+    index = {r["data_id"] for r in json.loads(_read(s3, "raw/index.json") or "[]")}
+    data_id = key[len("processed/"):-len(".json")] if key.startswith("processed/") and key.endswith(".json") else None
+    if data_id is None or data_id not in index:
+        raise ValueError(f"processed/<월 문서 id>.json 형식이 아님: {key!r}")
     raw = _read(s3, key)
     if raw is None:
         raise ValueError(f"S3에 없음: {key}")
     data = json.loads(raw)
+    _validate_processed(data)
+
     changed, checked = [], 0
-    conn = None
     for d in data:
-        if d.get("emotion") != "비통":
+        if d["emotion"] != "비통":
             continue
         checked += 1
         new = reclassify(d["original"], d["translation"])
         if new != d["emotion"]:
-            conn = conn or get_conn()
-            db.set_emotion(conn, d["id"], new)  # DB를 먼저: JSON 저장이 실패해도 다시 실행하면 같은 결과로 맞춰진다
             changed.append({"id": d["id"], "from": d["emotion"], "to": new})
             d["emotion"] = new
     if changed:
         s3.put_object(Bucket=os.environ["DATA_BUCKET"], Key=key,
                       Body=json.dumps(data, ensure_ascii=False, indent=1).encode("utf-8"),
                       ContentType="application/json")
-    return {"checked": checked, "changed": changed}
+    sync = db.sync_emotions(get_conn(), [(d["id"], d["original"], d["emotion"]) for d in data])
+    return {"checked": checked, "changed": changed, "db_updated": sync["updated"],
+            "db_missing": sync["missing"], "db_stale": sync["stale"]}
 
 
 def lambda_handler(event, context):

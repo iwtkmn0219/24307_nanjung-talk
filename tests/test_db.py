@@ -115,9 +115,23 @@ def test_stats_queries():
     assert "豚" in c.calls[2][0] and "돼지" in c.calls[2][0]
 
 
-def test_set_emotion_updates_only_emotion():
+def test_sync_emotions_updates_only_differing_rows_and_reports_missing_and_stale():
+    items = [("a", "o1", "일상"), ("b", "o2", "비통"), ("c", "o3", "일상"), ("d", "o4", "분노")]
+    # SELECT 결과: a는 DB가 비통(→갱신), b는 이미 같음, c는 원문이 달라 stale, d는 DB에 없음
+    c = FakeConn([[["a", "o1", "비통"], ["b", "o2", "비통"], ["c", "다른 원문", "비통"]], [["a"]]])
+    out = db.sync_emotions(c, items)
+    assert out == {"updated": ["a"], "missing": ["d"], "stale": ["c"]}
+    assert len(c.calls) == 2 and c.calls[0][1] == {"ids": ["a", "b", "c", "d"]}
+    sql, params = c.calls[1]
+    assert sql.startswith("UPDATE diary SET emotion") and "RETURNING id" in sql and "embedding" not in sql
+    assert params == {"id": "a", "original": "o1", "emotion": "일상"}
+
+
+def test_sync_emotions_counts_update_that_hits_no_row_as_missing():
+    c = FakeConn([[["a", "o1", "비통"]], []])
+    assert db.sync_emotions(c, [("a", "o1", "일상")]) == {"updated": [], "missing": ["a"], "stale": []}
+
+
+def test_sync_emotions_with_no_items_does_not_query():
     c = FakeConn()
-    db.set_emotion(c, "1597-04-13", "일상")
-    sql, params = c.calls[0]
-    assert sql.startswith("UPDATE diary SET emotion") and "WHERE id" in sql and "embedding" not in sql
-    assert params == {"id": "1597-04-13", "emotion": "일상"}
+    assert db.sync_emotions(c, []) == {"updated": [], "missing": [], "stale": []} and c.calls == []

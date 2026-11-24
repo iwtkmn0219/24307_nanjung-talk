@@ -228,31 +228,120 @@ def _grief_file():
     ], ensure_ascii=False)
 
 
-def test_reclassify_updates_json_and_db_only_for_changed_grief_entries(fakes, monkeypatch):
-    s3, br, fdb, _ = fakes({"processed/X.json": _grief_file()})
-    asked, set_calls = [], []
-    monkeypatch.setattr(ingest, "reclassify", lambda o, t, client=None: asked.append(o) or ("일상" if o == "o1" else "비통"))
-    fdb.set_emotion = lambda conn, i, e: set_calls.append((i, e))
+# ---- reclassify: S3(JSON)를 먼저 확정하고, DB는 JSON과 맞추는 멱등 동기화 ----
+RC_INDEX = json.dumps([{"data_id": "X", "title": "壬辰正月"}], ensure_ascii=False)
+
+
+def _grief_file(emotions=("비통", "비통", "일상")):
+    return json.dumps([
+        {"id": i, "original": f"o{n}", "translation": f"t{n}", "emotion": e, "intro": "i", "questions": ["1", "2", "3"]}
+        for n, (i, e) in enumerate(zip("abc", emotions), start=1)], ensure_ascii=False)
+
+
+class RcDB(FakeDB):
+    """sync_emotions 호출을 기록하고 사건 순서(events)를 S3와 공유한다."""
+
+    def __init__(self, events, result=None):
+        super().__init__()
+        self.events, self.result, self.sync_calls, self.fail = events, result, [], False
+
+    def sync_emotions(self, conn, items):
+        self.events.append("db")
+        self.sync_calls.append(list(items))
+        if self.fail:
+            raise OSError("db down")
+        return self.result or {"updated": [], "missing": [], "stale": []}
+
+
+def _rc(fakes, monkeypatch, objects=None, answers=None, db_result=None):
+    s3, br, _fdb, _t = fakes({"raw/index.json": RC_INDEX, "processed/X.json": _grief_file(), **(objects or {})})
+    events, asked = [], []
+    fdb = RcDB(events, db_result)
+    monkeypatch.setattr(ingest, "db", fdb)
+    orig_put = s3.put_object
+    s3.put_object = lambda **kw: (events.append("s3"), orig_put(**kw))[1]
+    answers = answers or {"o1": "일상", "o2": "비통"}
+    monkeypatch.setattr(ingest, "reclassify", lambda o, t_, client=None: asked.append(o) or answers[o])
+    return s3, br, fdb, events, asked
+
+
+def test_reclassify_saves_json_first_then_syncs_db_with_final_values(fakes, monkeypatch):
+    s3, br, fdb, events, asked = _rc(fakes, monkeypatch, db_result={"updated": ["a"], "missing": [], "stale": []})
     out = ingest.lambda_handler({"action": "reclassify", "key": "processed/X.json"}, None)
-    assert asked == ["o1", "o2"]                       # 비통이 아닌 항목은 묻지 않는다
-    assert out == {"checked": 2, "changed": [{"id": "a", "from": "비통", "to": "일상"}]}
-    assert set_calls == [("a", "일상")] and br.embed_calls == 0 and br.converse_calls == 0
+    assert asked == ["o1", "o2"]                                   # 비통이 아닌 항목은 묻지 않는다
+    assert events == ["s3", "db"]                                  # JSON 확정 → DB 동기화
+    assert out == {"checked": 2, "changed": [{"id": "a", "from": "비통", "to": "일상"}],
+                   "db_updated": ["a"], "db_missing": [], "db_stale": []}
     saved = json.loads(s3.objects["processed/X.json"])
     assert [d["emotion"] for d in saved] == ["일상", "비통", "일상"]
-    assert [d["translation"] for d in saved] == ["t1", "t2", "t3"]   # 번역은 그대로
+    assert [d["translation"] for d in saved] == ["t1", "t2", "t3"]
+    assert fdb.sync_calls == [[("a", "o1", "일상"), ("b", "o2", "비통"), ("c", "o3", "일상")]]  # 파일 전체를 최종 값으로 맞춘다
+    assert br.embed_calls == 0 and br.converse_calls == 0
 
 
-def test_reclassify_without_changes_writes_nothing(fakes, monkeypatch):
-    s3, _, fdb, _ = fakes({"processed/X.json": _grief_file()})
-    monkeypatch.setattr(ingest, "reclassify", lambda o, t, client=None: "비통")
-    fdb.set_emotion = lambda *a: (_ for _ in ()).throw(AssertionError("호출되면 안 됨"))
+def test_reclassify_without_changes_does_not_write_s3_but_still_reconciles_db(fakes, monkeypatch):
+    s3, _, fdb, events, _ = _rc(fakes, monkeypatch, answers={"o1": "비통", "o2": "비통"})
     out = ingest.lambda_handler({"action": "reclassify", "key": "processed/X.json"}, None)
-    assert out == {"checked": 2, "changed": []} and s3.puts == []
+    assert out["changed"] == [] and events == ["db"] and s3.puts == []
 
 
-def test_reclassify_rejects_bad_key_and_missing_file(fakes):
-    fakes({})
+def test_s3_write_failure_leaves_db_untouched(fakes, monkeypatch):
+    s3, _, fdb, events, asked = _rc(fakes, monkeypatch)
+
+    def boom(**kw):
+        raise OSError("s3 down")
+    s3.put_object = boom
+    with pytest.raises(OSError):
+        ingest.lambda_handler({"action": "reclassify", "key": "processed/X.json"}, None)
+    assert fdb.sync_calls == []                                    # DB는 건드리지 않았다
+    assert json.loads(s3.objects["processed/X.json"])[0]["emotion"] == "비통"
+
+
+def test_db_failure_after_json_saved_is_recovered_by_rerun(fakes, monkeypatch):
+    s3, _, fdb, events, asked = _rc(fakes, monkeypatch)
+    fdb.fail = True
+    with pytest.raises(OSError):
+        ingest.lambda_handler({"action": "reclassify", "key": "processed/X.json"}, None)
+    assert json.loads(s3.objects["processed/X.json"])[0]["emotion"] == "일상"   # 확정값은 이미 S3에 있다
+    fdb.fail = False
+    out = ingest.lambda_handler({"action": "reclassify", "key": "processed/X.json"}, None)
+    assert asked == ["o1", "o2", "o2"]                             # 재실행에서는 확정된 a를 다시 묻지 않는다(b만 다시)
+    assert fdb.sync_calls[-1][0] == ("a", "o1", "일상") and out["changed"] == []
+
+
+def test_reclassify_reports_rows_missing_or_stale_in_db(fakes, monkeypatch):
+    _rc(fakes, monkeypatch, db_result={"updated": [], "missing": ["b"], "stale": ["c"]})
+    out = ingest.lambda_handler({"action": "reclassify", "key": "processed/X.json"}, None)
+    assert out["db_missing"] == ["b"] and out["db_stale"] == ["c"]
+
+
+@pytest.mark.parametrize("key", ["raw/X.html", "processed/../X.json", "processed/Y.json", "processed/a/X.json"])
+def test_reclassify_rejects_keys_not_in_month_index(fakes, monkeypatch, key):
+    _rc(fakes, monkeypatch, objects={"processed/Y.json": _grief_file()})
     with pytest.raises(ValueError):
-        ingest.lambda_handler({"action": "reclassify", "key": "raw/X.html"}, None)
+        ingest.lambda_handler({"action": "reclassify", "key": key}, None)
+
+
+BAD_FILES = [
+    json.dumps({"a": 1}),
+    json.dumps([{"id": "a", "emotion": "비통"}]),
+    json.dumps([{"id": "a", "original": "o", "translation": "t", "emotion": "비통"},
+                {"id": "a", "original": "o", "translation": "t", "emotion": "비통"}]),
+    json.dumps([{"id": "", "original": "o", "translation": "t", "emotion": "비통"}]),
+    json.dumps([{"id": "a", "original": "o", "translation": "t", "emotion": "기쁨"}]),
+]
+
+
+@pytest.mark.parametrize("bad", BAD_FILES)
+def test_reclassify_rejects_malformed_entries_before_any_model_or_db_call(fakes, monkeypatch, bad):
+    s3, _, fdb, events, asked = _rc(fakes, monkeypatch, objects={"processed/X.json": bad})
     with pytest.raises(ValueError):
-        ingest.lambda_handler({"action": "reclassify", "key": "processed/none.json"}, None)
+        ingest.lambda_handler({"action": "reclassify", "key": "processed/X.json"}, None)
+    assert asked == [] and fdb.sync_calls == [] and s3.puts == []
+
+
+def test_reclassify_missing_file_raises(fakes, monkeypatch):
+    s3, *_ = _rc(fakes, monkeypatch)
+    del s3.objects["processed/X.json"]
+    with pytest.raises(ValueError):
+        ingest.lambda_handler({"action": "reclassify", "key": "processed/X.json"}, None)
