@@ -73,3 +73,14 @@ def test_render_marks_best_and_lists_rows():
            "in_dist": ev.distribution([0.5]), "out_dist": ev.distribution([0.2])}
     txt = render(res)
     assert "<- best" in txt and txt.count("<- best") == 1 and "0.21" in txt and "겹침 False" in txt
+
+
+def test_eval_chat_summarize_counts_blocked_in_and_passed_out():
+    import sys
+    sys.path.insert(0, "scripts")
+    from eval_chat import summarize
+    rows = [{"q": "a", "expect": "in", "mode": "normal"}, {"q": "b", "expect": "in", "mode": "out_of_scope"},
+            {"q": "c", "expect": "out", "mode": "out_of_scope"}, {"q": "d", "expect": "out", "mode": "normal"},
+            {"q": "e", "expect": "out", "mode": "modern"}]
+    s = summarize(rows)
+    assert s == {"in_total": 2, "in_blocked": ["b"], "out_total": 3, "out_passed": ["d"], "accuracy": 0.6}

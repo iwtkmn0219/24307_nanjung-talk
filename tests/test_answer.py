@@ -248,3 +248,13 @@ def test_system_prompt_tells_model_to_refuse_exactly():
     answer("x", [hit(0.5)], [], "normal", client=c)
     s = system_of(c)
     assert NO_BASIS in s and "무관" in s and "다른 말" in s
+
+
+def test_prompt_separates_unrecorded_topic_from_unrelated_topic():
+    c = FakeClient()
+    answer("배 멀미 하셨어요?", [hit(0.5)], [], "normal", client=c)
+    s = system_of(c)
+    # 장군의 삶·전쟁·가족·건강처럼 당시 세계의 주제는 '일기에 적지 않아 모른다'로, 당시에 없던 주제만 고정 문구로
+    assert "일기에 적지 않아" in s and "당시" in s and "현대" in s
+    refuse = s.index(NO_BASIS)
+    assert s.index("일기에 적지 않아") != refuse
