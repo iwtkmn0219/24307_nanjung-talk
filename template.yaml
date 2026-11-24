@@ -20,6 +20,15 @@ Parameters:
     Type: AWS::EC2::SecurityGroup::Id
   DataBucket:
     Type: String
+  SimThreshold:
+    Type: String
+    Default: "0.30"
+  DailyLimit:
+    Type: Number
+    Default: 20
+  AllowedOrigin:
+    Type: String
+    Default: http://localhost:5500
 
 Globals:
   Function:
@@ -72,7 +81,84 @@ Resources:
         - DynamoDBWritePolicy:
             TableName: !Ref TodayMapTable
 
+  UsageTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowOrigins: [!Ref AllowedOrigin]
+        AllowMethods: [GET, POST, OPTIONS]
+        AllowHeaders: [content-type, x-client-id]
+        MaxAge: 600
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 20
+        ThrottlingRateLimit: 10
+
+  ChatFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: nanjung.handlers.chat.lambda_handler
+      MemorySize: 512
+      Timeout: 29
+      Environment:
+        Variables:
+          SIM_THRESHOLD: !Ref SimThreshold
+          DAILY_LIMIT: !Ref DailyLimit
+          TODAY_TABLE: !Ref TodayMapTable
+          USAGE_TABLE: !Ref UsageTable
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource:
+                - arn:aws:bedrock:*::foundation-model/*
+                - !Sub arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UsageTable
+      Events:
+        Chat:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /chat
+            Method: POST
+
+  DiaryFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: nanjung.handlers.diary.lambda_handler
+      MemorySize: 256
+      Timeout: 10
+      Environment:
+        Variables:
+          TODAY_TABLE: !Ref TodayMapTable
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref TodayMapTable
+      Events:
+        Diary:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /diary
+            Method: GET
+
 Outputs:
+  ApiUrl:
+    Value: !Sub https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com
   IngestFunctionName:
     Value: !Ref IngestFunction
   TodayMapTableName:
