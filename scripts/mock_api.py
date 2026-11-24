@@ -1,7 +1,7 @@
 """로컬 목 API (포트 8787). 실제 계약(src/nanjung/handlers/{chat,diary}.py)과 같은 JSON을 돌려준다.
 
 사용: python scripts/mock_api.py  → web/config.js의 API_BASE를 "http://localhost:8787"로(커밋하지 않는다)
-GET /diary?scenario=nearest|grief|fail, POST /chat 키워드: 아들·인공지능·한도·장애·태그
+GET /diary?scenario=nearest|grief|fail|slow(5초 늦게 오는 비통 일기), POST /chat 키워드: 아들·인공지능·한도·장애·태그
 """
 from __future__ import annotations
 
@@ -91,8 +91,9 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         if u.path != "/diary":
             return self._send(404, {"error": "없는 경로"})
-        time.sleep(DELAY_S)
-        self._send(*diary(parse_qs(u.query).get("scenario", [None])[0]))
+        scenario = parse_qs(u.query).get("scenario", [None])[0]
+        time.sleep(5 if scenario == "slow" else DELAY_S)
+        self._send(*diary("grief" if scenario == "slow" else scenario))
 
     def do_POST(self):
         if urlparse(self.path).path != "/chat":

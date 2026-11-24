@@ -99,3 +99,11 @@ test("idle 아닐 때 answer/limit 외 send만 무시, 상태는 새 객체", ()
   assert.notEqual(s1, s0); assert.equal(s0.status, "idle");
   assert.equal(s1.status, "pending"); assert.equal(s1.lastQuestion, "a");
 });
+
+test("오늘의 일기 감정은 첫 답변 전에만 톤에 반영", () => {
+  let s = L.reduce(L.initialState(), { type: "send", message: "q" });
+  s = L.reduce(s, { type: "answer", message: "q", body: { answer: "a", mode: "normal", sources: [] } });
+  assert.equal(L.reduce(s, { type: "diary", emotion: "비통" }), s);
+  const pending = L.reduce(L.initialState(), { type: "send", message: "q" });
+  assert.equal(L.reduce(pending, { type: "diary", emotion: "비통" }).tone, "grief");
+});

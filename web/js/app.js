@@ -55,20 +55,23 @@ function add(node) {
 }
 
 // ---- 오늘의 일기 ----
-async function loadDiary(slot) {
-  const skeleton = V.diarySkeleton();
-  if (slot) slot.replaceWith(skeleton); else add(skeleton);
-  const r = await getDiary({ base, query: mockQuery });
+// 일기 카드와 첫 인사는 대화 맨 위의 고정 슬롯 하나에 함께 넣는다(늦게 와도 대화 순서를 지킨다).
+const diarySlot = document.createElement("div");
+diarySlot.className = "diary-slot";
+log.prepend(diarySlot);
+
+async function loadDiary() {
+  diarySlot.replaceChildren(V.diarySkeleton());
+  const today = kstToday(new Date()); // 요청(md)과 화면 문구가 같은 KST 날짜를 쓴다
+  const r = await getDiary({ base, md: today.md, query: mockQuery });
   if (r.kind !== "ok") {
-    const err = V.diaryError(() => loadDiary(err));
-    skeleton.replaceWith(err);
+    diarySlot.replaceChildren(V.diaryError(() => loadDiary()));
     render();
     return;
   }
   const body = r.body;
-  skeleton.replaceWith(V.diaryCard(body, kstToday(new Date())));
   const intro = `${body.entry.intro} 무엇이든 물어보시오.`;
-  add(V.generalBubble(intro, {}, V.chips(body.questions, pick)));
+  diarySlot.replaceChildren(V.diaryCard(body, today), V.generalBubble(intro, {}, V.chips(body.questions, pick)));
   dispatch({ type: "diary", emotion: body.entry.emotion });
   render();
 }
@@ -114,8 +117,9 @@ async function send(text, { retryOf = null } = {}) {
     box.focus();
   } else {
     dispatch({ type: "unavailable" });
+    // 이 안내 박스의 [다시 여쭙기]는 이 박스를 만든 질문(message)을 다시 보낸다
     const box = V.notice("unavailable", r.kind === "unavailable" ? r.answer : null,
-      () => send(state.lastQuestion ?? message, { retryOf: box }));
+      () => send(message, { retryOf: box }));
     pending.replaceWith(box);
     render();
     input.focus();

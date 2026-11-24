@@ -16,8 +16,28 @@ async function request(url, init, fetchFn, timeoutMs) {
   }
 }
 
-function isChatBody(b) {
-  return b && typeof b.answer === "string" && typeof b.mode === "string" && Array.isArray(b.sources);
+const MODES = new Set(["normal", "serious", "out_of_scope", "modern"]);
+const isStr = (v) => typeof v === "string";
+const isStrArray = (v) => Array.isArray(v) && v.every(isStr);
+const CARD_KEYS = ["id", "label", "original_line", "translation_line"];
+const ENTRY_KEYS = ["id", "label", "original", "translation", "emotion", "intro", "solar_date"];
+
+/** 화면이 실제로 쓰는 필드를 API 경계에서 검사한다. 맞지 않으면 null(→ 장애와 같게 처리) */
+function chatBody(b) {
+  if (!b || !isStr(b.answer) || !MODES.has(b.mode) || !Array.isArray(b.sources)) return null;
+  if (!b.sources.every(c => c && typeof c === "object" && CARD_KEYS.every(k => isStr(c[k])))) return null;
+  const suggestions = b.suggestions ?? [];
+  if (!isStrArray(suggestions)) return null;
+  return { ...b, suggestions };
+}
+
+function diaryBody(b) {
+  const e = b?.entry;
+  if (!e || typeof e !== "object" || !ENTRY_KEYS.every(k => isStr(e[k]))) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(e.solar_date)) return null;
+  const questions = b.questions ?? [];
+  if (!isStrArray(questions) || typeof b.exact !== "boolean") return null;
+  return { ...b, questions };
 }
 
 export async function postChat({ base, clientId, message, history, lastSourceIds, fetchFn = fetch, timeoutMs = TIMEOUT_MS }) {
@@ -35,18 +55,23 @@ export async function postChat({ base, clientId, message, history, lastSourceIds
   } catch {
     return unavailable(null); // 네트워크 끊김·타임아웃
   }
-  if (r.status === 200 && isChatBody(r.body)) return { kind: "ok", body: r.body };
-  if (r.status === 429) {
-    return { kind: "limit", answer: typeof r.body?.answer === "string" ? r.body.answer : LIMIT_TEXT };
+  if (r.status === 200) {
+    const body = chatBody(r.body);
+    return body ? { kind: "ok", body } : unavailable(null);
   }
+  // 앱의 하루 한도만 잠금. API Gateway 스로틀(같은 429)은 잠시 뒤 다시 묻게 한다
+  if (r.status === 429 && r.body?.answer === LIMIT_TEXT) return { kind: "limit", answer: LIMIT_TEXT };
   if (r.status === 400) return { kind: "invalid" };
   return unavailable(r.status === 503 ? r.body : null);
 }
 
-export async function getDiary({ base, query = "", fetchFn = fetch, timeoutMs = TIMEOUT_MS }) {
+/** md: 브라우저가 계산한 KST 오늘(MM-DD). 화면 문구와 같은 날짜로 요청한다 */
+export async function getDiary({ base, md = "", query = "", fetchFn = fetch, timeoutMs = TIMEOUT_MS }) {
+  const qs = [md && `md=${encodeURIComponent(md)}`, query].filter(Boolean).join("&");
   try {
-    const r = await request(`${base}/diary${query ? `?${query}` : ""}`, { method: "GET" }, fetchFn, timeoutMs);
-    if (r.status === 200 && r.body && r.body.entry) return { kind: "ok", body: r.body };
+    const r = await request(`${base}/diary${qs ? `?${qs}` : ""}`, { method: "GET" }, fetchFn, timeoutMs);
+    const body = r.status === 200 ? diaryBody(r.body) : null;
+    if (body) return { kind: "ok", body };
   } catch { /* 아래 error */ }
   return { kind: "error" };
 }

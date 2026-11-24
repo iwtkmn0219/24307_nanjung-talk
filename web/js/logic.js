@@ -99,7 +99,8 @@ export function reduce(state, action) {
     case "unavailable":
       if (state.status === "locked") return state;
       return { ...state, status: "idle" };
-    case "diary":
+    case "diary": // 늦게 도착한 오늘의 일기가 이미 받은 답의 톤을 덮지 않게, 첫 답 전에만 반영
+      if (state.history.length > 0) return state;
       return { ...state, tone: action.emotion === "비통" ? "grief" : null };
     default:
       return state;
