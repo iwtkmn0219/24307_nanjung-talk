@@ -23,7 +23,7 @@ def test_parse_valid():
     json.dumps({**GOOD, "questions": ["a"]}, ensure_ascii=False),
     json.dumps({k: v for k, v in GOOD.items() if k != "translation"}, ensure_ascii=False),
     json.dumps({**GOOD, "translation": ""}, ensure_ascii=False),
-    json.dumps({**GOOD, "intro": "가" * 41}, ensure_ascii=False),
+    json.dumps({**GOOD, "intro": "가" * 61}, ensure_ascii=False),
     json.dumps([GOOD], ensure_ascii=False),
 ])
 def test_parse_invalid_raises(bad):
@@ -64,7 +64,7 @@ def test_enrich_fills_fields():
     assert (e.translation, e.emotion, e.intro, e.questions) == ("맑음.", "일상", "평범한 날이었소.", ["a", "b", "c"])
     kw = c.kwargs[0]
     assert kw["modelId"] == bedrock.CHAT_MODEL_ID
-    assert kw["inferenceConfig"] == {"maxTokens": 1500, "temperature": 0.2}
+    assert kw["inferenceConfig"] == {"maxTokens": 4096, "temperature": 0.2}  # 가장 긴 날(609자)도 잘리지 않게
 
 
 def test_enrich_retries_once_then_succeeds():
@@ -153,3 +153,19 @@ def test_api_config_fits_in_lambda_timeout():
     from nanjung import db
     worst = 2 * (cfg.connect_timeout + cfg.read_timeout) + db.CONNECT_TIMEOUT
     assert worst < 29  # embed + converse + DB 연결이 API Gateway/Lambda 29초 안에 끝나야 한다
+
+
+def test_prompt_has_archery_and_hao_style_guidance():
+    system, _ = build_prompt(entry())
+    assert "巡" in system and "순" in system  # 射帿 N巡 → 활 N순
+    assert "하오체" in system and "~네" in system  # intro 말투 지시(반말·해라체 금지 예시)
+
+
+def test_prompt_glossary_mother():
+    system, _ = build_prompt(entry())
+    assert "天只" in system and "어머니" in system  # 난중일기의 天只는 어머니
+
+
+def test_intro_up_to_60_is_accepted():
+    # 프롬프트는 40자를 요구하지만, 조금 넘긴 소개 때문에 하루치 적재가 실패하지 않게 60자까지 받는다
+    assert parse_response(json.dumps({**GOOD, "intro": "가" * 60}, ensure_ascii=False))["intro"] == "가" * 60
