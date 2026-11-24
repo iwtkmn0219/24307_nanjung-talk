@@ -83,4 +83,14 @@ def test_eval_chat_summarize_counts_blocked_in_and_passed_out():
             {"q": "c", "expect": "out", "mode": "out_of_scope"}, {"q": "d", "expect": "out", "mode": "normal"},
             {"q": "e", "expect": "out", "mode": "modern"}]
     s = summarize(rows)
-    assert s == {"in_total": 2, "in_blocked": ["b"], "out_total": 3, "out_passed": ["d"], "accuracy": 0.6}
+    assert s == {"in_total": 2, "in_blocked": ["b"], "out_total": 3, "out_passed": ["d"], "errors": [], "accuracy": 0.6}
+
+
+def test_eval_chat_summarize_reports_503_errors_separately_and_excludes_them_from_accuracy():
+    import sys
+    sys.path.insert(0, "scripts")
+    from eval_chat import summarize
+    rows = [{"q": "a", "expect": "in", "mode": "normal"}, {"q": "b", "expect": "in", "mode": "error"},
+            {"q": "c", "expect": "out", "mode": "out_of_scope"}]
+    s = summarize(rows)
+    assert s["errors"] == ["b"] and s["in_blocked"] == [] and s["out_passed"] == [] and s["accuracy"] == 1.0

@@ -408,3 +408,11 @@ def test_empty_date_result_falls_back_without_focus(env):
     _, rec = env(FakeDB({None: [Hit(entry(), 0.9)]}))
     call(ev(body("정유년 9월 16일 일기")))
     assert rec.focus == [None]
+
+
+def test_503_logs_the_cause(env, caplog):
+    import logging
+    env(embed_exc=BedrockUnavailable("ThrottlingException: Too many requests"))
+    with caplog.at_level(logging.WARNING, logger="nanjung.handlers.chat"):
+        assert call(ev(body()))[0] == 503
+    assert any("ThrottlingException" in r.getMessage() or "ThrottlingException" in str(r.exc_info) for r in caplog.records)

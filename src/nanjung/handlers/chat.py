@@ -168,7 +168,8 @@ def lambda_handler(event, context):
             deadline.require(BEDROCK_CALL_S)
         focus_ids = date_ids if date_matched else None  # 날짜로 찾은 일기는 "사용자가 묻는 날"이라고 모델에 알린다
         return response(200, answer(message, hits, history, mode, client=api_client(), focus_ids=focus_ids))
-    except BedrockUnavailable:
+    except BedrockUnavailable as e:
+        log.warning("Bedrock 일시 장애로 503: %s", e, exc_info=e.__cause__ is not None)
         _refund(client_id, charged_at, deadline)
         return response(503, {"answer": MSG_UNAVAILABLE})
 

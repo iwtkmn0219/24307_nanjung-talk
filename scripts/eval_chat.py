@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import urllib.error
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -17,20 +18,27 @@ BLOCKED = {"out_of_scope", "modern"}
 
 
 def summarize(rows: list[dict]) -> dict:
+    """mode가 'error'(HTTP 오류, 예: Bedrock 503)인 질문은 따로 모으고 정확도 계산에서 뺀다."""
+    errors = [r["q"] for r in rows if r["mode"] == "error"]
+    rows = [r for r in rows if r["mode"] != "error"]
     ins = [r for r in rows if r["expect"] == "in"]
     outs = [r for r in rows if r["expect"] == "out"]
     in_blocked = [r["q"] for r in ins if r["mode"] in BLOCKED]
     out_passed = [r["q"] for r in outs if r["mode"] not in BLOCKED]
     wrong = len(in_blocked) + len(out_passed)
     return {"in_total": len(ins), "in_blocked": in_blocked, "out_total": len(outs), "out_passed": out_passed,
-            "accuracy": round((len(rows) - wrong) / len(rows), 4)}
+            "errors": errors, "accuracy": round((len(rows) - wrong) / len(rows), 4) if rows else 0.0}
 
 
 def run(api: str) -> list[dict]:
     qs = json.loads((Path(__file__).resolve().parent.parent / "eval" / "questions.json").read_text(encoding="utf-8"))
     rows = []
     for q in qs:
-        d = ask(api, q["q"])
+        try:
+            d = ask(api, q["q"])
+        except urllib.error.HTTPError as e:
+            rows.append({"q": q["q"], "expect": q["expect"], "mode": "error", "sources": 0, "answer": f"HTTP {e.code}"})
+            continue
         rows.append({"q": q["q"], "expect": q["expect"], "mode": d["mode"], "sources": len(d["sources"]),
                      "answer": d["answer"]})
     return rows
