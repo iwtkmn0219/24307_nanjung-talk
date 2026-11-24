@@ -263,3 +263,37 @@ def test_mentions_date_or_event_and_relative_direction_helpers():
     assert not mentions_date_or_event("오늘의 일기") and not mentions_date_or_event("배 멀미 하셨어요?")
     assert relative_direction("오늘의 일기 다음 날은요?") == 1 and relative_direction("전날은요?") == -1
     assert relative_direction("오늘의 일기") == 0
+
+
+# ---- 사용자 제보: '과거의 오늘'·'오늘 뭐 하셨어요?'·'이맘때'도 오늘의 일기로 ----
+@pytest.mark.parametrize("msg", [
+    "과거의 오늘 어떤 일을 하고 계셨어요?", "오늘 뭐 하셨어요?", "옛날 오늘은 어떠셨어요?", "이맘때 뭐 하셨어요?",
+    "그 시절 오늘 어디 계셨어요?", "그때 오늘 무슨 일이 있으셨어요?", "당시 오늘은 어떻게 지내셨어요?", "오늘 어디서 보내셨어요?",
+    "이맘때는 어땠어요?", "오늘 어떤 일을 겪으셨어요?",
+])
+def test_today_with_past_expression_or_honorific_past_is_detected(msg):
+    from nanjung.date_resolver import is_today_question
+    assert is_today_question(msg) is True
+
+
+@pytest.mark.parametrize("msg", [
+    "오늘 점심 메뉴 추천해 주세요", "오늘날 정치 어때요?", "요즘 오늘 날씨 어때요?", "과거에는 어땠어요?", "그때 뭐 하셨어요?",
+    "옛날 이야기 해 주세요", "당시 상황이 어땠어요?", "뭐 하셨어요?", "오늘 날씨 어때요?", "오늘날 뭐 하셨어요?",
+])
+def test_past_expression_or_honorific_without_today_word_is_not_detected(msg):
+    from nanjung.date_resolver import is_today_question
+    assert is_today_question(msg) is False
+
+
+@pytest.mark.parametrize("msg", ["오늘 옛 친구 이야기를 들려주세요", "오늘은 당시의 풍습을 설명해 주세요", "오늘 점심은 어디서 하셨어요?",
+                                 "올해 이맘때 날씨는 어때요?", "작년 이맘때 뭐 했어요?", "이번 달 이맘때는 어때요?"])
+def test_time_words_that_modify_something_else_are_not_detected(msg):
+    from nanjung.date_resolver import is_today_question
+    assert is_today_question(msg) is False
+
+
+@pytest.mark.parametrize("msg", ["오늘 하루 뭐 하셨어요?", "오늘은 어디서 지내셨어요?", "오늘 무슨 일이 있으셨어요?", "옛 오늘 어떠셨어요?",
+                                 "과거의 오늘은 어땠어요?", "이맘때는 어떻게 지내셨어요?"])
+def test_adjacent_past_today_and_day_activity_questions_are_detected(msg):
+    from nanjung.date_resolver import is_today_question
+    assert is_today_question(msg) is True

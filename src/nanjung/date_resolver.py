@@ -97,8 +97,21 @@ def _explicit(message: str) -> str | None:
 TODAY_RE = re.compile(r"오늘의\s*(?:일기|장군)|오늘\s*일기|오늘\s*장군|오늘은?\s*어떠(?:셨|세요|십니|시)|년\s*전\s*오늘")
 
 
+# '오늘' + 과거 표현은 서로 붙어 있을 때만("과거의 오늘", "옛날 오늘은", "그 시절 오늘"): "오늘 옛 친구 이야기"처럼 다른 말을 꾸미는 건 제외.
+# 하루 행적 질문("오늘 뭐 하셨어요?", "오늘 어디 계셨어요?")은 '오늘' 바로 뒤에 의문어가 오고 그 뒤에 과거형 존대가 올 때만:
+# "오늘 점심은 어디서 하셨어요?"처럼 다른 대상이 끼면 제외. '이맘때'는 올해·작년 같은 현재 시점 수식이 없을 때만 단독으로 인정한다.
+# '오늘날'은 현대 표현이라 제외한다.
+PAST_TODAY_RE = re.compile(r"(?:과거|옛날|옛|그때|그\s*시절|당시)(?:의|에는|에|엔)?\s*오늘(?!날)")
+_WH = r"(?:뭐|뭘|무엇을?|무얼|무슨\s*일이?|어떤\s*일[을이]?|어디(?:서|에서|에)?|어떻게)"
+DAY_ACTIVITY_RE = re.compile(rf"오늘(?:은|도)?\s*(?:(?:다음\s*날|전날|그다음\s*날|이튿날)(?:은|엔)?\s*)?(?:하루\s*(?:종일\s*)?)?{_WH}\s*(?:하고\s*)?(?:하|계|있으|지내|보내|겪으)셨")
+THIS_TIME_RE = re.compile(r"이맘때")
+CURRENT_PERIOD_RE = re.compile(r"올해|금년|작년|지난해|내년|이번\s*(?:해|달|주|겨울|여름|봄|가을)|요즘|지금")
+
+
 def is_today_question(message: str) -> bool:
-    return bool(TODAY_RE.search(message))
+    if TODAY_RE.search(message) or PAST_TODAY_RE.search(message) or DAY_ACTIVITY_RE.search(message):
+        return True
+    return bool(THIS_TIME_RE.search(message)) and not CURRENT_PERIOD_RE.search(message)
 
 
 def relative_direction(message: str) -> int:

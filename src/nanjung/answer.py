@@ -192,13 +192,24 @@ FOCUS_NOTE = ("사용자가 묻는 날은 [일기] 중 {labels}의 일기다. �
               "\"처음 듣는 말이라 내 답할 길이 없소.\"라고만 답하시오.")
 
 
+# 근거 일기에 '○○入來'·'○○來見'처럼 고을·진 이름 뒤에 오다 동사가 붙은 문장이 있을 때만 붙이는 지시.
+# 항상 넣으면 일기 안 질문(배 멀미 등)이 일기 밖으로 막히는 일이 늘어(실측 8회 중 7회) 조건부로 둔다.
+COMING_RE = re.compile(r"(?:^|[。，])[\u4e00-\u9fff]{1,3}(?:，[\u4e00-\u9fff]{1,3})*(?:入來|來見|來謁|來告|來話)(?=[。，]|$)")
+GOVERNOR_NOTE = ("[참고] 위 일기에 '興陽，順天入來'처럼 고을·진 이름 뒤에 來·入來·來見이 붙은 문장이 있다. 그 이름이 고을·진이면 "
+                 "그 고을의 수령·장수(현감, 부사, 만호 등)가 왔다는 뜻이다. 장소가 주어인 듯 \"흥양과 순천에서 들어왔다\"고 하지 말고 "
+                 "\"흥양과 순천의 수령이 들어왔소\"처럼 사람이 온 것으로 말하시오. 일기에 직함이 없으면 직함을 지어내지 말고 \"수령\"이라고만 하시오. "
+                 "이름이 사람 이름이면 그 사람이 왔다고 하시오.")
+
+
 def _system(mode: Mode, hits: list[Hit], focus_ids: list[str] | None = None) -> str:
     diary = "\n\n".join(f"<{h.entry.label}>\n원문: {h.entry.original}\n번역: {h.entry.translation}"
                         for h in hits[:TOP_N])
     style = SERIOUS_STYLE if mode == "serious" else NORMAL_STYLE
     labels = [h.entry.label for h in hits[:TOP_N] if focus_ids and h.entry.id in focus_ids]
     focus = f"\n{FOCUS_NOTE.format(labels=', '.join(labels))}" if labels else ""
-    return f"{BASE_SYSTEM}\n{style}{focus}\n\n[일기]\n{diary}"
+    governor = (f"\n{GOVERNOR_NOTE}" if any(COMING_RE.search(h.entry.original) for h in hits[:TOP_N]
+                                             if focus_ids and h.entry.id in focus_ids) else "")
+    return f"{BASE_SYSTEM}\n{style}{focus}{governor}\n\n[일기]\n{diary}"
 
 
 def _messages(history: list[dict], message: str) -> list[dict]:

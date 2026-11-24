@@ -554,3 +554,22 @@ def test_card_skips_korean_header_with_nal_and_comma_forms():
     for head in ["초하루 날 병술.", "초하루 날, 갑진일.", "초여섯 날, 을해일.", "초이틀 날 갑인일."]:
         assert card("十三日壬寅。晴。出陣。", f"{head} 맑다. 출정하였다.")[1] == "출정하였다.", head
     assert card("十三日壬寅。出陣。", "초하루 날씨는 맑았다. 출정하였다.")[1].startswith("초하루 날씨")   # 날씨 문장은 머리가 아니다
+
+
+def test_governor_note_is_added_only_when_the_diary_has_a_place_name_before_a_verb_of_coming(fake_client):
+    # 興陽，順天入來 = 흥양·순천의 수령이 왔다. 사람이 주어가 되게 풀고, 직함을 모르면 '수령'으로 말한다
+    h = hit(0.5, original="初六日己巳。風雨大作。興陽，順天入來。")
+    answer("과거의 오늘 어떤 일을 하고 계셨어요?", [h], [], "normal", client=fake_client, focus_ids=[h.entry.id])
+    s = system_of(fake_client)
+    assert "入來" in s and "수령" in s and "현감" in s and "지어내지" in s
+
+
+def test_governor_note_is_absent_for_other_diaries(fake_client):
+    answer("배 멀미 하셨어요?", [hit(0.5, original="初六日己巳。晴。出東軒公事。射帿十巡。")], [], "normal", client=fake_client)
+    assert "수령" not in system_of(fake_client)
+
+
+def test_governor_note_is_absent_when_the_day_was_not_the_one_asked_about(fake_client):
+    # 날짜·오늘로 찾은 일기가 아니라 검색 결과일 뿐이면 붙이지 않는다(일기 안 질문이 막히는 부작용 방지)
+    answer("배 멀미 하셨어요?", [hit(0.5, original="初六日己巳。風雨大作。興陽，順天入來。")], [], "normal", client=fake_client)
+    assert "수령" not in system_of(fake_client)
