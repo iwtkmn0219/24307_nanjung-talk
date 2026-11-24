@@ -103,4 +103,6 @@ def lambda_handler(event, context):
         return _ingest(event["key"])
     if action == "build_today_map":
         return _build_today_map()
+    if action == "stats":
+        return db.stats(get_conn())
     raise ValueError(f"알 수 없는 action: {action!r}")

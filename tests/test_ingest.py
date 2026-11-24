@@ -178,3 +178,10 @@ def test_get_conn_uses_reconnecting_shared_conn(monkeypatch):
     sentinel = object()
     monkeypatch.setattr(ingest, "shared_conn", lambda: sentinel)
     assert ingest.get_conn() is sentinel
+
+
+def test_stats_reports_count_emotions_and_suspicious_terms(fakes):
+    _, _, fdb, _ = fakes({})
+    fdb.stats = lambda conn: {"count": 3, "emotions": {"일상": 2, "비통": 1}, "pig_in_son_entries": ["1597-10-14"]}
+    assert ingest.lambda_handler({"action": "stats"}, None) == {
+        "count": 3, "emotions": {"일상": 2, "비통": 1}, "pig_in_son_entries": ["1597-10-14"]}

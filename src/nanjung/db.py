@@ -95,3 +95,12 @@ def neighbor(conn, entry_id: str, direction: int) -> str | None:
 
 def all_dates(conn) -> list[tuple[str, object]]:
     return [(r[0], r[1]) for r in conn.run("SELECT id, solar_date FROM diary ORDER BY solar_date, id")]
+
+
+def stats(conn) -> dict:
+    """적재 점검용: 행 수, 감정 분포, 豚(아들 겸칭)이 있는데 번역에 '돼지'가 남은 항목."""
+    count = conn.run("SELECT count(*) FROM diary")[0][0]
+    emotions = {e: n for e, n in conn.run("SELECT emotion, count(*) FROM diary GROUP BY emotion ORDER BY 2 DESC")}
+    pig = [r[0] for r in conn.run(
+        "SELECT id FROM diary WHERE original LIKE '%豚%' AND translation LIKE '%돼지%' ORDER BY id")]
+    return {"count": count, "emotions": emotions, "pig_in_son_entries": pig}

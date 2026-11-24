@@ -106,3 +106,10 @@ def test_ssl_context_uses_ca_bundle_when_configured(monkeypatch, tmp_path):
     monkeypatch.delenv("DB_SSL_CA")
     db.ssl_context()
     assert calls[-1] == {}
+
+
+def test_stats_queries():
+    c = FakeConn([[[1593]], [["일상", 1000], ["비통", 50]], [["1597-10-14"]]])
+    out = db.stats(c)
+    assert out == {"count": 1593, "emotions": {"일상": 1000, "비통": 50}, "pig_in_son_entries": ["1597-10-14"]}
+    assert "豚" in c.calls[2][0] and "돼지" in c.calls[2][0]
