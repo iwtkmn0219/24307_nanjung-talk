@@ -228,3 +228,38 @@ def test_today_expressions_are_detected(msg):
 def test_plain_today_word_alone_is_not_enough(msg):
     from nanjung.date_resolver import is_today_question
     assert is_today_question(msg) is False
+
+
+# ---- 리뷰 반영: '싸게'·'물리적' 같은 말이 전투 동사로 오인되지 않게 ----
+@pytest.mark.parametrize("msg", ["배 12척이 싸게 팔렸나요?", "배 13척의 물리적 한계는 무엇이오?", "열두 척은 값이 싼가요?",
+                                 "12척을 물리적으로 옮길 수 있나요?", "배 13척이 싸다던데 사실이오?"])
+def test_ship_counts_with_price_or_physics_words_do_not_map(msg):
+    assert r(msg) is None
+
+
+@pytest.mark.parametrize("msg", ["12척으로 싸우셨나요?", "13척이 싸웠다는 게 사실이오?", "열두 척으로 싸운 이야기 해 주세요",
+                                 "12척으로 물리치셨죠?", "13척으로 물리쳤다고 들었어요", "12척의 배로 이기셨나요?", "열세 척으로 이겨서 대첩을 거뒀죠?",
+                                 "12척 전투 이야기"])
+def test_ship_counts_with_real_fighting_verbs_still_map(msg):
+    assert r(msg) == ["1597-09-16"]
+
+
+# ---- 리뷰 반영: '오늘은 어떠' 오탐, 날짜·사건 언급 여부 ----
+@pytest.mark.parametrize("msg", ["오늘은 어떠셨어요?", "오늘은 어떠십니까?", "오늘 어떠세요?", "오늘은 어떠셨습니까"])
+def test_honorific_forms_of_how_are_you_today_are_detected(msg):
+    from nanjung.date_resolver import is_today_question
+    assert is_today_question(msg) is True
+
+
+@pytest.mark.parametrize("msg", ["오늘은 어떠한 점심을 먹을까요?", "오늘 어떠한 옷을 입을까요?", "오늘은 어떤 노래가 좋아요?"])
+def test_plain_how_about_today_questions_are_not_detected(msg):
+    from nanjung.date_resolver import is_today_question
+    assert is_today_question(msg) is False
+
+
+def test_mentions_date_or_event_and_relative_direction_helpers():
+    from nanjung.date_resolver import mentions_date_or_event, relative_direction
+    assert mentions_date_or_event("명량 오늘의 일기") and mentions_date_or_event("정유년 9월 16일 오늘")
+    assert not mentions_date_or_event("오늘의 일기") and not mentions_date_or_event("배 멀미 하셨어요?")
+    assert relative_direction("오늘의 일기 다음 날은요?") == 1 and relative_direction("전날은요?") == -1
+    assert relative_direction("오늘의 일기") == 0

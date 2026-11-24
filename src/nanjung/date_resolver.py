@@ -45,7 +45,7 @@ def _prison(m: str) -> bool | None:
 
 # 명량: 지명은 단독으로, '12척·13척'은 싸움 동사와 함께일 때만(배 12척을 만들었나요? 같은 질문이 걸리면 안 된다)
 SHIPS_RE = re.compile(r"(?<!\d)1[23]\s*척|열\s*(?:두|세)\s*척")
-FIGHT_RE = re.compile(r"이기|이긴|이겼|싸|승리|대첩|전투|물리")
+FIGHT_RE = re.compile(r"이기|이긴|이겼|이겨|싸우|싸웠|싸운|싸워|승리|대첩|전투|물리치|물리쳤|물리친")
 
 
 def _myeongnyang(m: str) -> bool:
@@ -93,11 +93,22 @@ def _explicit(message: str) -> str | None:
 
 
 # '오늘' 한 단어만으로는 연결하지 않는다("오늘 점심 메뉴"는 일기 밖). 오늘의 일기를 가리키는 표현이 있을 때만.
-TODAY_RE = re.compile(r"오늘의\s*(?:일기|장군)|오늘\s*일기|오늘\s*장군|오늘은?\s*어떠|년\s*전\s*오늘")
+# '어떠'는 '오늘은 어떠한 점심을…'처럼 일기와 무관한 문장에도 쓰이므로 장군께 묻는 존대형(어떠셨·어떠세요·어떠십니까)만 인정한다
+TODAY_RE = re.compile(r"오늘의\s*(?:일기|장군)|오늘\s*일기|오늘\s*장군|오늘은?\s*어떠(?:셨|세요|십니|시)|년\s*전\s*오늘")
 
 
 def is_today_question(message: str) -> bool:
     return bool(TODAY_RE.search(message))
+
+
+def relative_direction(message: str) -> int:
+    """'다음 날'이면 1, '전날'이면 -1, 상대 표현이 없으면 0."""
+    return _direction(message)
+
+
+def mentions_date_or_event(message: str) -> bool:
+    """명시 날짜나 사건(명량 등)을 말했는가. 부정 표현이 있어도 말한 것으로 센다."""
+    return _explicit(message) is not None or bool(_events(message, ignore_negation=True))
 
 
 def resolve(message: str, last_source_ids: list[str], neighbor_fn: NeighborFn) -> list[str] | None:

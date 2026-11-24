@@ -14,7 +14,8 @@ from botocore.config import Config
 from .. import db
 from ..answer import answer, decide_mode, is_modern
 from ..bedrock import API_CONFIG, BedrockUnavailable, api_client, embed
-from ..date_resolver import is_today_question, resolve
+from ..date_resolver import (NEGATION_RE, is_today_question, mentions_date_or_event, relative_direction,
+                             resolve)
 from ..quota import KST, allow, refund
 from ..today import pick
 from .common import response, shared_conn
@@ -143,6 +144,24 @@ def _cid8(event) -> str:
         return "-"
 
 
+def _todays_diary_ids(conn, message: str, now: datetime, deadline: "Deadline") -> list[str] | None:
+    """오늘의 일기 id(상대 표현이 있으면 그 이웃). 없거나 조회가 실패하면 None → 일반 검색."""
+    deadline.require(DDB_CALL_S)
+    try:
+        today_id = today_entry_id(now)
+    except Exception:  # 오늘의 일기 조회가 실패해도 질문은 일반 검색으로 답한다
+        log.warning("오늘의 일기 조회 실패", exc_info=True)
+        return None
+    if not today_id:
+        return None
+    direction = relative_direction(message)
+    if not direction:
+        return [today_id]
+    deadline.require(DB_OP_S)
+    nid = db.neighbor(conn, today_id, direction)   # '오늘의 일기 전날'은 직전 답변이 아니라 오늘 일기의 이웃
+    return [nid] if nid else None
+
+
 def lambda_handler(event, context):
     """요청마다 한 줄 로그(앞 8자 id, 상태 코드)를 남겨, 하루 한도 같은 문제를 나중에 추적할 수 있게 한다."""
     resp = _handle(event, context)
@@ -177,15 +196,12 @@ def _handle(event, context):
         def neighbor(i, d):
             deadline.require(DB_OP_S)
             return db.neighbor(conn, i, d)
-        date_ids = resolve(message, last_ids, neighbor)
-        if date_ids is None and is_today_question(message):
-            deadline.require(DDB_CALL_S)
-            try:
-                today_id = today_entry_id(charged_at)
-            except Exception:  # 오늘의 일기 조회가 실패해도 질문은 일반 검색으로 답한다
-                log.warning("오늘의 일기 조회 실패", exc_info=True)
-                today_id = None
-            date_ids = [today_id] if today_id else None
+        # '오늘의 일기'를 직접 요청한 경우에만 오늘의 일기로 연결한다. 부정("오늘 일기 말고…")이나 명시 날짜·사건이
+        # 있으면 그쪽 해석을 따르고, 그 결과가 비어도 오늘 일기로 되돌아가지 않는다(일반 검색).
+        if is_today_question(message) and not NEGATION_RE.search(message) and not mentions_date_or_event(message):
+            date_ids = _todays_diary_ids(conn, message, charged_at, deadline)
+        else:
+            date_ids = resolve(message, last_ids, neighbor)
         deadline.require(BEDROCK_CALL_S)
         qvec = embed(message, client=api_client())
         hits = []

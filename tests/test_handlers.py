@@ -550,3 +550,49 @@ def test_every_request_is_logged_with_a_short_client_id_and_status(env, caplog):
     assert any("cid=00000000" in m and "status=200" in m for m in text)
     assert any("status=400" in m for m in text)
     assert not any(CID in m for m in text)                          # 전체 id는 로그에 남기지 않는다(앞 8자만)
+
+
+# ---- 리뷰 반영: 오늘 + 부정·상대 날짜·명시 날짜 ----
+ITEMS_TODAY = {"12-01": {"md": "12-01", "ids": ["x-a"], "exact": True}}
+
+
+def _no_today_lookup(monkeypatch):
+    monkeypatch.setattr(chat, "today_table", lambda: (_ for _ in ()).throw(AssertionError("오늘 조회하면 안 됨")))
+
+
+@pytest.mark.parametrize("msg", ["오늘 일기 말고 배 멀미 얘기해 줘요", "오늘의 일기는 빼고 활 이야기를 해 주세요",
+                                 "오늘은 어떠한 점심을 먹을까요?", "오늘의 일기 말고 무술년 11월 17일 다음 날"])
+def test_negation_or_non_request_does_not_force_todays_diary(env, monkeypatch, msg):
+    fdb, rec = _today_env(env, monkeypatch, ITEMS_TODAY)
+    _no_today_lookup(monkeypatch)
+    status, _ = call(ev(body(msg)))
+    assert status == 200 and rec.focus == [None] and ("x-a" not in [i for c in fdb.search_calls for i in (c[1] or [])])
+
+
+def test_relative_day_after_todays_diary_uses_neighbor_of_todays_id_not_previous_answer(env, monkeypatch):
+    fdb, rec = _today_env(env, monkeypatch, ITEMS_TODAY, results={("x-0",): [Hit(entry("x-0"), 0.1)]})
+    fdb.neighbors = {("x-a", -1): "x-0", ("1592-06-10", -1): "WRONG"}
+    call(ev(body("오늘의 일기 전날은요?", last_source_ids=["1592-06-10"])))
+    assert fdb.search_calls[0] == (5, ["x-0"]) and rec.focus == [["x-0"]]
+
+
+def test_relative_day_after_todays_diary_without_neighbor_falls_back_to_general_search(env, monkeypatch):
+    fdb, rec = _today_env(env, monkeypatch, ITEMS_TODAY)
+    fdb.neighbors = {}
+    call(ev(body("오늘의 일기 다음 날은요?")))
+    assert fdb.search_calls == [(5, None)] and rec.focus == [None]
+
+
+def test_explicit_date_with_empty_result_does_not_fall_back_to_today(env, monkeypatch):
+    fdb, rec = _today_env(env, monkeypatch, ITEMS_TODAY)
+    _no_today_lookup(monkeypatch)
+    fdb.neighbors = {}                                              # 무술년 11월 17일은 마지막 날 → 다음 날 없음
+    call(ev(body("무술년 11월 17일 다음 날은 오늘의 일기와 비슷한가요?")))
+    assert rec.focus == [None]
+
+
+def test_event_beats_today_expression(env, monkeypatch):
+    fdb, _ = _today_env(env, monkeypatch, ITEMS_TODAY, results={("1597-09-16",): [Hit(entry("1597-09-16"), 0.1)]})
+    _no_today_lookup(monkeypatch)
+    call(ev(body("명량 오늘의 장군")))
+    assert fdb.search_calls[0] == (5, ["1597-09-16"])
