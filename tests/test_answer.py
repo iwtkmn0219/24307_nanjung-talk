@@ -247,7 +247,7 @@ def test_system_prompt_tells_model_to_refuse_exactly():
     c = FakeClient()
     answer("x", [hit(0.5)], [], "normal", client=c)
     s = system_of(c)
-    assert NO_BASIS in s and "무관" in s and "다른 말" in s
+    assert NO_BASIS in s and "아무 상관 없는" in s and "다른 말" in s
 
 
 def test_prompt_separates_unrecorded_topic_from_unrelated_topic():
