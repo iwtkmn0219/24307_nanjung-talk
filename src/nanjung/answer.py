@@ -76,8 +76,9 @@ def source_card(h: Hit) -> dict:
 
 FOCUS_NOTE = ("사용자가 묻는 날은 [일기] 중 {labels}의 일기다. 사용자가 말한 '다음 날'·'전날'·날짜는 이미 이 일기를 "
               "가리키도록 계산되어 있으니, 이 일기를 '전날'이나 '다음 날'로 여기지 말고 이 일기 내용으로 그날을 답하시오. "
-              "이 일기가 묻는 날 자체이므로 \"그날의 일은 일기에 없다\"고 하지 말고, "
-              "\"처음 듣는 말이라 내 답할 길이 없소.\"라고도 답하지 마시오.")
+              "이 일기가 묻는 날 자체이므로 \"그날의 일은 일기에 없다\"고 하지 마시오. "
+              "다만 날짜와 함께 당시에는 없던 현대의 사물·연예·기술 같은 주제를 묻는다면, 날짜와 상관없이 "
+              "\"처음 듣는 말이라 내 답할 길이 없소.\"라고만 답하시오.")
 
 
 def _system(mode: Mode, hits: list[Hit], focus_ids: list[str] | None = None) -> str:
@@ -117,9 +118,9 @@ def answer(message: str, hits: list[Hit], history: list[dict], mode: Mode, clien
     asked = f"{message}\n\n[질문이 가리키는 날: {', '.join(labels)}]" if labels else message
     text = bedrock.converse(_system(mode, hits, focus_ids), _messages(history, asked), MAX_TOKENS, TEMPERATURE,
                             client=client).strip()
-    # 유사도 기준값을 통과했어도 모델이 "근거 없음"이라 답하면 일기 밖 질문으로 바꾼다(카드 없이 추천 질문만).
-    # 날짜로 찾은 질문은 그 일기로 답해야 하므로 바꾸지 않는다.
-    if not labels and LEAD_RE.sub("", text).startswith(FIXED_OUT):  # 앞의 …·「·따옴표 등은 무시
+    # 유사도 기준값을 통과했어도 모델이 거절 문구로 답하면 일기 밖 질문으로 바꾼다(카드 없이 추천 질문만).
+    # 날짜로 찾은 질문도 같다: 정상 답이면 그 일기로 답하지만, "날짜 + 현대·무관 주제" 혼합이면 거절이 맞다.
+    if LEAD_RE.sub("", text).startswith(FIXED_OUT):  # 앞의 …·「·따옴표 등은 무시
         return {"answer": f"{FIXED_OUT} {REDIRECT}", "mode": "out_of_scope", "sources": [],
                 "suggestions": suggestions}
     return {"answer": text, "mode": mode, "sources": [source_card(h) for h in hits[:TOP_N]],

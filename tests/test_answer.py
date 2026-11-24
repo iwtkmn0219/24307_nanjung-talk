@@ -231,10 +231,28 @@ def test_serious_mode_is_also_filtered():
     assert r["mode"] == "out_of_scope"
 
 
-def test_date_matched_question_is_never_converted():
+def test_date_matched_question_with_refusal_becomes_out_of_scope_without_cards():
+    # 날짜 + 현대·무관 주제 혼합("명량 때 아이유 노래…"): 거절 문구면 카드 없이 chip만 보인다
     h = hit(0.1)
-    r = answer("정유년 9월 16일", [h], [], "normal", client=FakeClient(reply=NO_BASIS), focus_ids=[h.entry.id])
-    assert r["mode"] == "normal" and r["answer"] == NO_BASIS and len(r["sources"]) == 1
+    r = answer("명량 때 아이유 노래 들어보셨어요?", [h], [], "normal", client=FakeClient(reply=NO_BASIS),
+               focus_ids=[h.entry.id])
+    assert r["mode"] == "out_of_scope" and r["sources"] == []
+    assert r["answer"] == "처음 듣는 말이라 내 답할 길이 없소. 대신 내 일기 이야기를 들려주리다."
+    assert r["suggestions"] == h.entry.questions
+
+
+def test_date_matched_normal_answer_is_kept():
+    h = hit(0.1)
+    r = answer("정유년 9월 16일", [h], [], "normal", client=FakeClient(reply="그날은 맑았소."), focus_ids=[h.entry.id])
+    assert r["mode"] == "normal" and r["answer"] == "그날은 맑았소." and len(r["sources"]) == 1
+
+
+def test_focus_note_allows_refusal_only_for_unrelated_modern_topic(fake_client):
+    h = hit(0.5)
+    answer("명량 때 아이유 노래?", [h], [], "normal", client=fake_client, focus_ids=[h.entry.id])
+    s = system_of(fake_client)
+    assert "라고도 답하지 마시오" not in s            # 날짜가 있어도 현대·무관 주제면 거절해야 한다
+    assert "현대" in s and NO_BASIS in s and "날짜" in s
 
 
 def test_normal_answer_that_merely_mentions_the_phrase_later_is_kept():
