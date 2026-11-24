@@ -554,3 +554,11 @@ def test_card_skips_korean_header_with_nal_and_comma_forms():
     for head in ["초하루 날 병술.", "초하루 날, 갑진일.", "초여섯 날, 을해일.", "초이틀 날 갑인일."]:
         assert card("十三日壬寅。晴。出陣。", f"{head} 맑다. 출정하였다.")[1] == "출정하였다.", head
     assert card("十三日壬寅。出陣。", "초하루 날씨는 맑았다. 출정하였다.")[1].startswith("초하루 날씨")   # 날씨 문장은 머리가 아니다
+
+
+def test_system_prompt_tells_model_that_a_place_name_before_a_verb_of_coming_means_its_governor(fake_client):
+    # 興陽，順天入來 = 흥양·순천의 수령이 왔다. 사람이 주어가 되게 풀고, 직함을 모르면 '수령'으로 말한다
+    answer("과거의 오늘 어떤 일을 하고 계셨어요?", [hit(0.5)], [], "normal", client=fake_client)
+    s = system_of(fake_client)
+    assert "고을" in s and "入來" in s and "수령" in s
+    assert "현감" in s and "지어내지" in s
