@@ -213,3 +213,11 @@ def test_reclassify_returns_emotion_and_retries_once():
     c3 = FakeConverseClient(["broken", "broken"])
     with pytest.raises(EnrichError):
         enrich_mod.reclassify("o", "t", client=c3)
+
+
+def test_parse_emotion_ignores_commentary_around_the_json():
+    text = '```json\n{"emotion": "비통"}\n```\n\n**분류 근거:**\n원문의 "不勝懷恨"과 {중괄호} 설명'
+    assert enrich_mod.parse_emotion(text) == "비통"
+    assert enrich_mod.parse_emotion('설명 먼저 {"emotion": "일상"} 뒤에 설명') == "일상"
+    with pytest.raises(EnrichError):
+        enrich_mod.parse_emotion('설명만 있고 {"emotion": "기쁨"}')

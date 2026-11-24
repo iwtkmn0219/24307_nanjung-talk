@@ -82,7 +82,7 @@ def enrich(e: DiaryEntry, client=None) -> DiaryEntry:
 # ---- 감정만 다시 분류(번역·소개는 그대로 두고 비용을 줄인다) ----
 EMOTION_MAX_TOKENS = 100
 
-EMOTION_SYSTEM = f"""당신은 『난중일기』 하루치의 정서를 분류한다. 원문과 현대어 번역을 읽고 JSON 객체 하나만 출력하라: {{"emotion": "<값>"}}
+EMOTION_SYSTEM = f"""당신은 『난중일기』 하루치의 정서를 분류한다. 원문과 현대어 번역을 읽고 JSON 객체 하나만 출력하라(설명이나 다른 글은 쓰지 마라): {{"emotion": "<값>"}}
 값은 반드시 다음 네 값 중 하나: {", ".join(f'"{e}"' for e in EMOTIONS)}
 {EMOTION_RULES}"""
 
@@ -91,12 +91,16 @@ def build_emotion_prompt(original: str, translation: str) -> tuple[str, list[dic
     return EMOTION_SYSTEM, [{"role": "user", "content": [{"text": f"원문:\n{original}\n\n번역:\n{translation}"}]}]
 
 
+EMOTION_JSON_RE = re.compile(r'\{\s*"emotion"\s*:\s*"[^"]*"\s*\}')
+
+
 def parse_emotion(text: str) -> str:
-    m = FENCE_RE.match(text)
-    if m:
-        text = m.group(1)
+    # 모델이 JSON 뒤에 '분류 근거' 같은 설명을 덧붙이는 일이 있어, {"emotion": ...} 객체만 뽑는다
+    m = EMOTION_JSON_RE.search(text)
+    if not m:
+        raise EnrichError(f"JSON 아님: {text[:80]!r}")
     try:
-        data = json.loads(text)
+        data = json.loads(m.group(0))
     except json.JSONDecodeError as ex:
         raise EnrichError(f"JSON 아님: {text[:80]!r}") from ex
     emo = data.get("emotion") if isinstance(data, dict) else None
