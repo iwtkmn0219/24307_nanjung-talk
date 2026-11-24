@@ -183,3 +183,24 @@ def test_no_focus_paragraph_without_date_match(fake_client):
 def test_focus_ignores_ids_not_in_hits(fake_client):
     answer("x", [hit(0.5)], [], "normal", client=fake_client, focus_ids=["nope"])
     assert "묻는 날" not in system_of(fake_client)
+
+
+def test_focus_label_is_also_attached_to_the_user_turn(fake_client):
+    h = hit(0.5)
+    answer("그다음 날은요?", [h], [], "normal", client=fake_client, focus_ids=[h.entry.id])
+    last = fake_client.kwargs[0]["messages"][-1]
+    assert last["role"] == "user"
+    text = last["content"][0]["text"]
+    assert text.startswith("그다음 날은요?") and h.entry.label in text and "가리키는 날" in text
+
+
+def test_user_turn_unchanged_without_focus(fake_client):
+    answer("배 멀미?", [hit(0.5)], [], "normal", client=fake_client)
+    assert fake_client.kwargs[0]["messages"][-1]["content"][0]["text"] == "배 멀미?"
+
+
+def test_system_prompt_forbids_generalizing_and_keeps_hao_endings(fake_client):
+    answer("활은 매일 쏘셨소?", [hit(0.5)], [], "normal", client=fake_client)
+    s = system_of(fake_client)
+    assert "일부" in s and "일반화" in s          # 몇 날의 일기로 '매일·자주·한 번도'를 단정하지 않는다
+    assert "습니다" in s and "나이다" in s          # 쓰지 말 어미를 구체적으로 못박는다
