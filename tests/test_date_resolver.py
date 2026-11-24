@@ -211,3 +211,20 @@ def test_new_myeongnyang_words_work_with_relative_day_and_explicit_date():
     nb2 = {("1597-09-16", -1): "1597-09-15"}.get
     assert resolve("울돌목 전날은요?", [], lambda i, d: nb2((i, d))) == ["1597-09-15"]
     assert r("12척으로 이긴 날 말고 정유년 9월 1일은요?") == ["1597-09-01"]
+
+
+# ---- '오늘' 질문 → 오늘의 일기 ----
+@pytest.mark.parametrize("msg", [
+    "오늘의 장군님은 어떠셨습니까", "오늘의 일기 보여 주세요", "오늘 일기 알려줘요", "오늘은 어떠셨어요?", "오늘 장군님은 뭐 하세요?",
+    "오늘의 장군은요?", "430년 전 오늘 무슨 일이 있었어요?", "400년 전 오늘은요?",
+])
+def test_today_expressions_are_detected(msg):
+    from nanjung.date_resolver import is_today_question
+    assert is_today_question(msg) is True
+
+
+@pytest.mark.parametrize("msg", ["오늘 점심 메뉴 추천해 주세요", "오늘 날씨 어때요?", "오늘날의 정치", "배 멀미 하셨어요?", "일기는 매일 쓰셨어요?",
+                                 "오늘 뭐 먹을까요?"])
+def test_plain_today_word_alone_is_not_enough(msg):
+    from nanjung.date_resolver import is_today_question
+    assert is_today_question(msg) is False

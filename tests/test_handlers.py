@@ -1,6 +1,6 @@
 import base64
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 import pytest
 
@@ -438,3 +438,55 @@ def test_time_budget_after_quota_is_logged_as_budget(env, caplog, monkeypatch):
         assert call(ev(body()))[0] == 503
     text = " ".join(rec.getMessage() for rec in caplog.records)
     assert "시간 예산" in text and "Bedrock 일시 장애" not in text
+
+
+# ---- '오늘' 질문은 화면의 오늘의 일기와 같은 일기를 근거로 ----
+def _today_env(env, monkeypatch, items, now=None, results=None):
+    fdb, rec = env(FakeDB(results or {}))
+    monkeypatch.setattr(chat, "today_table", lambda: FakeTodayTable(items))
+    monkeypatch.setattr(chat, "now_kst", lambda: now or datetime(2026, 12, 1, 0, 30, tzinfo=KST))
+    return fdb, rec
+
+
+def test_today_question_searches_todays_diary_and_marks_it_as_the_day_asked(env, monkeypatch):
+    items = {"12-01": {"md": "12-01", "ids": ["x-a", "x-b"], "exact": True}}
+    fdb, rec = _today_env(env, monkeypatch, items, results={("x-a",): [Hit(entry("x-a"), 0.1)]})
+    status, out = call(ev(body("오늘의 장군님은 어떠셨습니까")))
+    assert status == 200 and fdb.search_calls == [(5, ["x-a"])]       # 2026 % 2 == 0 → 첫 번째 (/diary와 같은 규칙)
+    assert rec.focus == [["x-a"]] and out["mode"] == "normal"
+
+
+def test_today_uses_kst_month_day_and_year_rotation(env, monkeypatch):
+    items = {"01-01": {"md": "01-01", "ids": ["x-a", "x-b"], "exact": True}}
+    # UTC 2026-12-31 15:30 = KST 2027-01-01 00:30 → md 01-01, 연도 2027 → 두 번째
+    now = datetime(2026, 12, 31, 15, 30, tzinfo=timezone.utc).astimezone(KST)
+    fdb, _ = _today_env(env, monkeypatch, items, now=now, results={("x-b",): [Hit(entry("x-b"), 0.1)]})
+    call(ev(body("오늘의 일기 보여 주세요")))
+    assert fdb.search_calls == [(5, ["x-b"])]
+
+
+def test_plain_today_word_does_not_trigger_the_lookup(env, monkeypatch):
+    fdb, rec = _today_env(env, monkeypatch, {"12-01": {"md": "12-01", "ids": ["x-a"], "exact": True}})
+    monkeypatch.setattr(chat, "today_table", lambda: (_ for _ in ()).throw(AssertionError("조회하면 안 됨")))
+    call(ev(body("오늘 점심 메뉴 추천해 주세요")))
+    assert rec.focus == [None]
+
+
+def test_explicit_date_beats_today_expression(env, monkeypatch):
+    items = {"12-01": {"md": "12-01", "ids": ["x-a"], "exact": True}}
+    fdb, _ = _today_env(env, monkeypatch, items, results={("1597-09-16",): [Hit(entry("1597-09-16"), 0.1)]})
+    call(ev(body("오늘의 일기 말고 정유년 9월 16일 일기")))
+    assert fdb.search_calls[0] == (5, ["1597-09-16"])
+
+
+def test_missing_today_map_falls_back_to_general_search(env, monkeypatch):
+    fdb, rec = _today_env(env, monkeypatch, {})
+    status, _ = call(ev(body("오늘의 장군님은 어떠셨습니까")))
+    assert status == 200 and fdb.search_calls == [(5, None)] and rec.focus == [None]
+
+
+def test_today_lookup_failure_falls_back_to_general_search(env, monkeypatch):
+    fdb, rec = _today_env(env, monkeypatch, {})
+    monkeypatch.setattr(chat, "today_table", lambda: (_ for _ in ()).throw(OSError("dynamodb down")))
+    status, out = call(ev(body("오늘의 장군님은 어떠셨습니까")))
+    assert status == 200 and fdb.search_calls == [(5, None)] and rec.focus == [None]

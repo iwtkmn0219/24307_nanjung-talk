@@ -92,6 +92,14 @@ def _explicit(message: str) -> str | None:
     return entry_id(year, month, day, bool(m[2]))
 
 
+# '오늘' 한 단어만으로는 연결하지 않는다("오늘 점심 메뉴"는 일기 밖). 오늘의 일기를 가리키는 표현이 있을 때만.
+TODAY_RE = re.compile(r"오늘의\s*(?:일기|장군)|오늘\s*일기|오늘\s*장군|오늘은?\s*어떠|년\s*전\s*오늘")
+
+
+def is_today_question(message: str) -> bool:
+    return bool(TODAY_RE.search(message))
+
+
 def resolve(message: str, last_source_ids: list[str], neighbor_fn: NeighborFn) -> list[str] | None:
     direction = _direction(message)
     explicit = _explicit(message)                     # 명시 날짜가 사건 사전보다 우선

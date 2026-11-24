@@ -14,8 +14,9 @@ from botocore.config import Config
 from .. import db
 from ..answer import answer, decide_mode, is_modern
 from ..bedrock import API_CONFIG, BedrockUnavailable, api_client, embed
-from ..date_resolver import resolve
+from ..date_resolver import is_today_question, resolve
 from ..quota import KST, allow, refund
+from ..today import pick
 from .common import response, shared_conn
 
 MSG_LIMIT = "오늘은 그만 쉬어야겠소. 내일 다시 오시오."
@@ -72,6 +73,25 @@ def usage_table():
         import boto3
         _usage_table = boto3.resource("dynamodb", config=DDB_CONFIG).Table(os.environ["USAGE_TABLE"])
     return _usage_table
+
+
+_today_table = None
+
+
+def today_table():
+    global _today_table
+    if _today_table is None:
+        import boto3
+        _today_table = boto3.resource("dynamodb", config=DDB_CONFIG).Table(os.environ["TODAY_TABLE"])
+    return _today_table
+
+
+def today_entry_id(now: datetime) -> str | None:
+    """화면의 '오늘의 일기'(GET /diary)와 같은 규칙: KST 오늘 월·일 매핑, 후보가 여럿이면 KST 연도로 돌려 쓴다."""
+    item = today_table().get_item(Key={"md": f"{now:%m-%d}"}).get("Item")
+    if not item or not item.get("ids"):
+        return None
+    return pick({"ids": list(item["ids"])}, now.year)
 
 
 def now_kst() -> datetime:
@@ -154,6 +174,14 @@ def lambda_handler(event, context):
             deadline.require(DB_OP_S)
             return db.neighbor(conn, i, d)
         date_ids = resolve(message, last_ids, neighbor)
+        if date_ids is None and is_today_question(message):
+            deadline.require(DDB_CALL_S)
+            try:
+                today_id = today_entry_id(charged_at)
+            except Exception:  # 오늘의 일기 조회가 실패해도 질문은 일반 검색으로 답한다
+                log.warning("오늘의 일기 조회 실패", exc_info=True)
+                today_id = None
+            date_ids = [today_id] if today_id else None
         deadline.require(BEDROCK_CALL_S)
         qvec = embed(message, client=api_client())
         hits = []
