@@ -460,3 +460,11 @@ def test_normal_and_serious_keep_the_top_hits_own_questions(fake_client):
     assert answer("x", [top], [], "normal", client=fake_client)["suggestions"] == top.entry.questions
     grief = hit(0.6, "비통")
     assert answer("x", [grief], [], "serious", client=fake_client)["suggestions"] == grief.entry.questions
+
+
+def test_prompt_forbids_adding_feelings_reasons_or_methods_not_in_the_diary():
+    c = FakeClient()
+    answer("편지를 받으면 기분이 어땠어요?", [hit(0.5)], [], "normal", client=c)
+    s = system_of(c)
+    assert "느낌" in s and "이유" in s and "결심" in s and "방법" in s     # 일기에 없는 감정·이유·결심·방법 덧붙이기 금지
+    assert "도리라 여겼소" in s and "덧붙이지" in s                        # 실제로 나온 사례를 금지 예시로
