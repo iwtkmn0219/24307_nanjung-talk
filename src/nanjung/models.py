@@ -36,3 +36,9 @@ class DiaryEntry(RawEntry):
     emotion: str = ""
     intro: str = ""
     questions: list[str] = field(default_factory=list)
+
+
+@dataclass
+class Hit:
+    entry: DiaryEntry
+    similarity: float
