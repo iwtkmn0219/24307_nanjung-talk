@@ -108,3 +108,45 @@ def test_words_that_merely_contain_the_syllables_do_not_match(msg):
 def test_event_words_combine_with_relative_day():
     nb2 = {("1597-04-01", 1): "1597-04-02"}.get
     assert resolve("유배 다음날은요?", [], lambda i, d: nb2((i, d))) == ["1597-04-02"]
+
+
+# ---- 리뷰 반영: 여러 사건에 쓰이는 말·충돌·부정·입옥 시점 ----
+@pytest.mark.parametrize("msg", [
+    "유배가 아니라 노량에서의 상황을 묻소",              # 충돌 + 부정
+    "유배 말고 다른 이야기 해줘요",                      # 부정
+    "유배는 아니고 명량 이야기가 궁금해요",
+    "포로 압송 기록이 있나요?",                          # 장군 본인 맥락 없는 압송
+    "원균은 언제 파직됐어요?",                            # 장군 본인 맥락 없는 파직
+    "명량과 노량 이야기를 해줘요",                        # 사건 둘
+])
+def test_conflicting_negated_or_not_about_the_general_falls_back_to_general_search(msg):
+    assert r(msg) is None
+
+
+@pytest.mark.parametrize("msg", ["압송되셨을 때 이야기해 주세요", "장군께서 파직당하셨을 때는요?", "본인이 압송된 이유가 뭐예요?"])
+def test_ambiguous_words_map_when_the_question_is_about_the_general(msg):
+    assert r(msg) == ["1597-04-01"]
+
+
+def test_entering_prison_words_do_not_anchor_a_relative_day_on_the_release_day():
+    # '투옥 다음 날'은 입옥이 아니라 출옥을 기준으로 이웃 날짜를 구하면 안 된다 → 직전 근거 기준
+    assert r("투옥 다음 날은요?") is None
+    assert r("투옥 다음 날은요?", ["1592-06-10"]) == ["1592-08-24"]
+    assert r("하옥 다음날은?", ["1592-06-10"]) == ["1592-08-24"]
+    assert r("투옥되셨을 때는요?") == ["1597-04-01"]      # 상대 표현이 없으면 그대로 출옥일
+
+
+def test_release_words_still_anchor_relative_day():
+    nb2 = {("1597-04-01", 1): "1597-04-02", ("1597-04-01", -1): "1597-03-31"}.get
+    assert resolve("출옥 다음 날은요?", [], lambda i, d: nb2((i, d))) == ["1597-04-02"]
+    assert resolve("유배 전날은요?", [], lambda i, d: nb2((i, d))) == ["1597-03-31"]
+
+
+def test_explicit_date_still_wins_over_negated_or_conflicting_events():
+    assert r("유배 말고 정유년 9월 16일 일기") == ["1597-09-16"]
+    assert r("노량과 유배 말고 정유년 9월 1일은요?") == ["1597-09-01"]
+
+
+def test_ambiguous_word_without_the_general_does_not_pull_in_the_release_day():
+    # 압송이 본인 맥락이 아니면 사건으로 치지 않으므로 노량 하나만 남는다(출옥일 아님)
+    assert r("노량 전투 뒤 포로 압송에 관한 기록이 있소?") == ["1598-11-17"]

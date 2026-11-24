@@ -39,6 +39,9 @@ def run(api: str) -> list[dict]:
         except urllib.error.HTTPError as e:
             rows.append({"q": q["q"], "expect": q["expect"], "mode": "error", "sources": 0, "answer": f"HTTP {e.code}"})
             continue
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:  # 전송 오류도 중단하지 않고 따로 집계
+            rows.append({"q": q["q"], "expect": q["expect"], "mode": "error", "sources": 0, "answer": f"{type(e).__name__}: {e}"})
+            continue
         rows.append({"q": q["q"], "expect": q["expect"], "mode": d["mode"], "sources": len(d["sources"]),
                      "answer": d["answer"]})
     return rows

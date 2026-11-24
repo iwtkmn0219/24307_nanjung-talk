@@ -94,3 +94,23 @@ def test_eval_chat_summarize_reports_503_errors_separately_and_excludes_them_fro
             {"q": "c", "expect": "out", "mode": "out_of_scope"}]
     s = summarize(rows)
     assert s["errors"] == ["b"] and s["in_blocked"] == [] and s["out_passed"] == [] and s["accuracy"] == 1.0
+
+
+def test_eval_chat_run_records_transport_errors_and_continues(monkeypatch):
+    import sys
+    import urllib.error
+    sys.path.insert(0, "scripts")
+    import eval_chat
+    calls = []
+
+    def fake_ask(api, q):
+        calls.append(q)
+        if len(calls) == 1:
+            raise urllib.error.URLError("connection reset")
+        if len(calls) == 2:
+            raise TimeoutError("timed out")
+        return {"mode": "normal", "sources": [], "answer": "a"}
+    monkeypatch.setattr(eval_chat, "ask", fake_ask)
+    rows = eval_chat.run("http://x")
+    assert len(rows) == 40 and rows[0]["mode"] == "error" and rows[1]["mode"] == "error" and rows[2]["mode"] == "normal"
+    assert "connection reset" in rows[0]["answer"]
