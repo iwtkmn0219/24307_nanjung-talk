@@ -518,7 +518,7 @@ def test_clients_are_independent(table): ...
   4. `embed(message)`
   5. `search(k=5, date_ids)`: 날짜 결과가 비면 date_ids 없이 다시 검색
   6. `decide_mode` → `answer`
-- 환경변수: `SIM_THRESHOLD`(초기값 `0.30`), `DAILY_LIMIT=20`, `TODAY_TABLE`, `USAGE_TABLE`, DB 관련
+- 환경변수: `SIM_THRESHOLD`(초기값 `0.30` → Task 13 평가로 `0.22` 확정), `DAILY_LIMIT=20`, `TODAY_TABLE`, `USAGE_TABLE`, DB 관련
 - HttpApi CORS: `AllowOrigins: ["http://localhost:5500"]`, `AllowHeaders: ["content-type","x-client-id"]`
 
 - [ ] **Step 1: 실패하는 테스트 작성** (의존성은 모두 가짜)
