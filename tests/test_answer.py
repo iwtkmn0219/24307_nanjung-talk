@@ -3,7 +3,7 @@ from datetime import date
 import pytest
 
 from nanjung.answer import (FIXED_MODERN, FIXED_OUT, FIXED_SUGGESTIONS, MODERN_MARKERS, answer, decide_mode,
-                            fixed_suggestions, source_card)
+                            fixed_suggestions, is_modern, source_card)
 from nanjung.models import SOURCE_NOTE, DiaryEntry, Hit
 
 _n = iter(range(10_000))
@@ -444,10 +444,29 @@ def test_fixed_suggestions_pick_three_distinct_and_rotate():
     a = fixed_suggestions(random.Random(1))
     assert len(a) == 3 and len(set(a)) == 3 and set(a) <= set(FIXED_SUGGESTIONS)
     assert fixed_suggestions(random.Random(1)) == a                        # 같은 씨앗이면 같은 결과
+    rng = random.Random(20261125)                                          # 씨앗을 고정해 간헐 실패를 없앤다
     seen = set()
     for _ in range(60):
-        seen |= set(fixed_suggestions())
+        seen |= set(fixed_suggestions(rng))
     assert seen == set(FIXED_SUGGESTIONS)                                  # 호출마다 돌려 써서 전부 노출된다
+
+
+# 칩을 눌렀을 때 실제 경로(현대 질문 판정·오늘 질문 판정·날짜 해석)가 기대대로 동작하는지 고정한다.
+CHIP_DATES = {
+    "명량 해전은 어떻게 싸우셨습니까?": ["1597-09-16"],
+    "어머님께서 돌아가셨을 때 어떠셨습니까?": ["1597-04-13"],
+    "아드님 면이 전사했을 때 어떠셨습니까?": ["1597-10-14"],
+    "임진왜란이 터진 날 무엇을 하고 계셨습니까?": ["1592-04-13"],
+    "출옥하신 날은 어떠셨습니까?": ["1597-04-01"],
+}
+
+
+@pytest.mark.parametrize("chip", FIXED_SUGGESTIONS)
+def test_every_chip_passes_the_real_modern_today_and_date_paths(chip):
+    from nanjung.date_resolver import is_today_question, resolve
+    assert not is_modern(chip)                                             # 현대 질문으로 막히지 않는다
+    assert not is_today_question(chip)                                     # 오늘 일기로 새지 않는다
+    assert resolve(chip, [], lambda i, d: None) == CHIP_DATES.get(chip)    # 사건 칩은 그 날짜, 나머지는 날짜 조건 없음
 
 
 def test_modern_answer_uses_fixed_suggestions_even_with_irrelevant_top_hit(fake_client):
