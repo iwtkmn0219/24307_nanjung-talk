@@ -302,8 +302,11 @@ def test_prompt_tells_model_to_correct_false_premises_from_the_diary():
     answer("유배가셨을때 얘기해줘요", [hit(0.5)], [], "normal", client=c)
     s = system_of(c)
     assert "전제" in s and "바로잡" in s
-    assert "유배가 아니라" in s                      # 예시
+    assert "직접 모순" in s                          # 같은 사람·날·사건에 대해 기록이 직접 모순될 때만 정정
+    assert "침묵" in s and "유보" in s               # 기록이 말이 없거나 대상이 다르면 유보
     assert "지어내지" in s and "일기에 적지 않아" in s  # 근거 없는 전제는 바로잡지도 지어내지도 않는다
+    assert "유배가 아니라" not in s                  # 출옥 기록만으로 유배 여부까지 부정하게 가르치지 않는다
+    assert "유배에 관한 일은 일기에 적지 않았소" in s  # 예시: 출옥 사실은 말하되 유배는 유보
 
 
 def test_prompt_bans_system_side_wording_and_requires_first_person():
@@ -321,3 +324,19 @@ def test_premise_and_wording_instructions_are_in_every_mode():
         c = FakeClient()
         answer("x", [hit(0.5, emo)], [], mode, client=c)
         assert "바로잡" in system_of(c) and "내 일기" in system_of(c), mode
+
+
+def test_prompt_forbids_meta_talk_about_receiving_or_searching_records():
+    c = FakeClient()
+    answer("x", [hit(0.5)], [], "normal", client=c)
+    s = system_of(c)
+    assert "받았다" in s and "검색" in s and "선정" in s     # 기록을 받았다·찾았다·골랐다는 설명 금지(뜻으로)
+    assert "제가 받은 기록" in s and "근거로 받은 일기" in s   # 금지 예시
+
+
+def test_focus_note_separates_found_day_from_missing_detail():
+    c = FakeClient()
+    h = hit(0.5)
+    answer("정유년 9월 16일 점심은?", [h], [], "normal", client=c, focus_ids=[h.entry.id])
+    s = system_of(c)
+    assert "세부" in s and "그날 있었던 일" in s and "적지 않았" in s

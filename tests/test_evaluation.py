@@ -114,3 +114,14 @@ def test_eval_chat_run_records_transport_errors_and_continues(monkeypatch):
     rows = eval_chat.run("http://x")
     assert len(rows) == 40 and rows[0]["mode"] == "error" and rows[1]["mode"] == "error" and rows[2]["mode"] == "normal"
     assert "connection reset" in rows[0]["answer"]
+
+
+def test_behavior_check_detects_internal_phrases_and_paraphrases():
+    import sys
+    sys.path.insert(0, "scripts")
+    from behavior_check import internal_phrases
+    assert internal_phrases("그날 나는 맑았소.") == []
+    for bad in ["주어진 일기에는 없소", "제시된 기록을 보면", "[일기]에 따르면", "질문이 가리키는 날은", "제가 받은 기록에는",
+                "근거로 받은 일기를 보면", "검색된 일기 중", "선정한 일기에서는", "받은 자료에는"]:
+        assert internal_phrases(bad), bad
+    assert internal_phrases("내 일기에는 적지 않았소. 내가 받은 상처는 깊었소.") == []   # '받은 상처'는 정상
