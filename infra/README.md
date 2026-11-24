@@ -25,7 +25,7 @@
 
 - [ ] PostgreSQL 16, `db.t4g.micro`, 스토리지 20GB
 - [ ] 퍼블릭 액세스 끔, 서브넷 그룹 = 위 프라이빗 서브넷 2개, 보안 그룹 `sg-rds`
-- [ ] 자동 백업 7일
+- [ ] 자동 백업 1일(무료 플랜 제한, 복구는 S3 processed에서 다시 적재). 7일은 FreeTierRestrictionError로 거부됨
 - [ ] 초기 DB 이름 `nanjung`
 - [ ] DB 사용자: **MVP는 마스터 사용자를 그대로 쓴다.** `sam deploy` 때 `DbUser`에 마스터 사용자 이름, `DbPassword`에 그 비밀번호를 넘긴다.
   - 이유: 적재 Lambda의 `init_schema`가 `CREATE EXTENSION vector`와 테이블·인덱스를 만든다. RDS에서 확장 설치는 `rds_superuser` 역할(마스터 사용자)이 필요하다.

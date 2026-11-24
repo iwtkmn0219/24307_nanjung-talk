@@ -335,7 +335,7 @@ def test_pick_rotates_by_year(): assert pick({"ids":["a","b"]}, 2026) == "a"
 - VPC `nanjung-vpc` 10.0.0.0/16, 프라이빗 서브넷 2개(2a, 2c). NAT는 만들지 않는다.
 - 보안 그룹: `sg-lambda`(아웃바운드 전체), `sg-rds`(5432는 sg-lambda에서만), `sg-endpoint`(443은 sg-lambda에서만)
 - VPC 엔드포인트: `com.amazonaws.ap-northeast-2.bedrock-runtime`(Interface, Private DNS 켬, sg-endpoint, **AZ 1개(2a 서브넷)만** — 비용 절감, 사용자 결정), `s3`·`dynamodb`(Gateway, 프라이빗 라우팅 테이블)
-- RDS PostgreSQL 16, `db.t4g.micro`, 20GB, 퍼블릭 액세스 끔, 자동 백업 7일, DB 이름 `nanjung`
+- RDS PostgreSQL 16, `db.t4g.micro`, 20GB, 퍼블릭 액세스 끔, 자동 백업 1일(무료 플랜 제한, 복구는 S3 processed에서 다시 적재), DB 이름 `nanjung`
 - S3 버킷 `nanjung-data-<계정ID>`(`raw/`, `processed/`)
 - AWS Budgets 월 USD 40 알림(사용자 결정)
 
@@ -609,6 +609,6 @@ def test_diary_defaults_to_kst_today(): # now=2026-12-01T00:30+09:00 → md "12-
 - [ ] **Step 4: 운영 확인**
   - CloudWatch Logs에 오류가 없는지
   - Budgets 알림이 켜져 있는지
-  - RDS 자동 백업이 켜져 있는지
+  - RDS 자동 백업이 켜져 있는지(1일, 무료 플랜 제한, 복구는 S3 processed에서 다시 적재)
   - 21번째 질문에 429 문구가 뜨는지
 - [ ] **Step 5: Commit** `chore: 유사도 기준값 확정과 평가셋`
