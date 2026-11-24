@@ -127,3 +127,14 @@ test("getDiary: 브라우저가 계산한 md를 보낸다(시나리오와 함께
   await getDiary({ base: "http://x", md: "12-31", query: "scenario=grief", fetchFn: async (u) => { url = u; return res(200, ok)(); } });
   assert.equal(url, "http://x/diary?md=12-31&scenario=grief");
 });
+
+test("선택 출처 문구가 문자열이 아니면 기본 문구로 정규화", async () => {
+  const { SOURCE_NOTE } = await import("../../web/js/logic.js");
+  const evil = { toString: null };
+  const c = await postChat(args(res(200, { ...good, sources: [{ ...card, note: evil }] })));
+  assert.equal(c.kind, "ok"); assert.equal(c.body.sources[0].note, SOURCE_NOTE);
+  const d = await getDiary({ base: "", fetchFn: res(200, { entry, questions: [], exact: true, source_note: evil }) });
+  assert.equal(d.kind, "ok"); assert.equal(d.body.source_note, SOURCE_NOTE);
+  const keep = await postChat(args(res(200, good)));
+  assert.equal(keep.body.sources[0].note, "N");
+});

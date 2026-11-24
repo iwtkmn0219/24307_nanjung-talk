@@ -1,5 +1,5 @@
 // fetch 래퍼. 실패는 모두 결과 객체로 바꿔 돌려준다(예외를 밖으로 던지지 않는다).
-import { LIMIT_TEXT, UNAVAILABLE_TEXT } from "./logic.js";
+import { LIMIT_TEXT, SOURCE_NOTE, UNAVAILABLE_TEXT } from "./logic.js";
 
 const TIMEOUT_MS = 25000;
 
@@ -28,7 +28,8 @@ function chatBody(b) {
   if (!b.sources.every(c => c && typeof c === "object" && CARD_KEYS.every(k => isStr(c[k])))) return null;
   const suggestions = b.suggestions ?? [];
   if (!isStrArray(suggestions)) return null;
-  return { ...b, suggestions };
+  const sources = b.sources.map(c => ({ ...c, note: isStr(c.note) ? c.note : SOURCE_NOTE }));
+  return { ...b, sources, suggestions };
 }
 
 function diaryBody(b) {
@@ -37,7 +38,7 @@ function diaryBody(b) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(e.solar_date)) return null;
   const questions = b.questions ?? [];
   if (!isStrArray(questions) || typeof b.exact !== "boolean") return null;
-  return { ...b, questions };
+  return { ...b, questions, source_note: isStr(b.source_note) ? b.source_note : SOURCE_NOTE };
 }
 
 export async function postChat({ base, clientId, message, history, lastSourceIds, fetchFn = fetch, timeoutMs = TIMEOUT_MS }) {
