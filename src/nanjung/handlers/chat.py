@@ -24,8 +24,9 @@ MAX_MESSAGE = 300
 MAX_HISTORY_ITEMS = 50
 MAX_SOURCE_IDS = 10
 SEARCH_K = 5
-# 요청 전체 마감: 프론트 타이머(25초)와 Lambda 29초보다 먼저 응답한다.
-# 모든 네트워크 단계는 시작 전에 "그 단계가 걸릴 수 있는 최대 시간"이 남았는지 확인하고, 모자라면 503이다.
+# 요청 마감 목표 22초(단계 시작 판단용): 각 네트워크 단계는 시작 전에 "그 단계의 설정상 최대 시간"이
+# 남았는지 확인하고, 모자라면 503이다. pg8000 timeout은 소켓 대기 1회 기준이라 쿼리 하나가 DB_OP_S를
+# 넘을 수 있으므로 25초 안 응답을 엄격히 보장하지는 않는다. 넘으면 프론트 25초 타이머가 503과 같은 안내를 띄운다.
 REQUEST_BUDGET_S = 22.0
 LAMBDA_MARGIN_S = 1.0
 DDB_CONFIG = Config(connect_timeout=2, read_timeout=3, retries={"total_max_attempts": 1, "mode": "standard"})
