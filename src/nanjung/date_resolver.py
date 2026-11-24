@@ -24,16 +24,21 @@ PRISON_STRONG = ("백의종군", "출옥", "감옥", "유배", "귀양", "옥살
 PRISON_ENTRY = ("투옥", "옥에 갇", "하옥")                           # 입옥 시점 → 같은 날로는 가되 '다음 날' 기준으로는 쓰지 않는다
 PRISON_AMBIGUOUS = ("압송", "파직")                                   # 여러 사건에 쓰이는 말 → 장군 본인 이야기일 때만
 SELF_RE = re.compile(r"셨|께서|장군|당신|본인|나으리")
+# 존칭(셨·께서)은 제3자에게도 쓰이므로, 다른 사람 이름이 보이면 장군 본인 이야기로 보지 않는다
+THIRD_PARTY_RE = re.compile(r"원균|권율|이억기|류성룡|유성룡|정탁|배설|김응서|선조|임금|전하|포로|왜장|왜군|도요토미|고니시|가토")
 NEGATION_RE = re.compile(r"아니라|아니고|말고|빼고|제외")
 
 
 def _prison(m: str) -> bool | None:
     """일치하면 '출옥일을 상대 표현의 기준으로 써도 되는지'를, 일치하지 않으면 None을 돌려준다."""
-    if any(w in m for w in PRISON_STRONG):
-        return True
-    if any(w in m for w in PRISON_ENTRY):
+    strong = any(w in m for w in PRISON_STRONG)
+    # "감옥에 갇히신…"처럼 강한 말과 입옥 표현이 겹치면 입옥으로 본다(기준으로 쓰지 않음)
+    entry = any(w in m for w in PRISON_ENTRY) or (strong and "갇" in m)
+    if entry:
         return False
-    if any(w in m for w in PRISON_AMBIGUOUS) and SELF_RE.search(m):
+    if strong:
+        return True
+    if any(w in m for w in PRISON_AMBIGUOUS) and SELF_RE.search(m) and not THIRD_PARTY_RE.search(m):
         return False
     return None
 
@@ -57,9 +62,9 @@ def _direction(message: str) -> int:
     return 0
 
 
-def _events(message: str) -> list[tuple[str, bool]]:
+def _events(message: str, *, ignore_negation: bool = False) -> list[tuple[str, bool]]:
     """일치한 사건 (id, 상대 표현 기준 가능 여부). 부정("유배 말고…")이 있으면 사건은 쓰지 않는다."""
-    if NEGATION_RE.search(message):
+    if NEGATION_RE.search(message) and not ignore_negation:
         return []
     return [(eid, ok) for eid, fn in EVENTS if (ok := fn(message)) is not None]
 
@@ -81,10 +86,13 @@ def _explicit(message: str) -> str | None:
 def resolve(message: str, last_source_ids: list[str], neighbor_fn: NeighborFn) -> list[str] | None:
     direction = _direction(message)
     explicit = _explicit(message)                     # 명시 날짜가 사건 사전보다 우선
+    mentioned = _events(message, ignore_negation=True)
     events = _events(message)
     # 서로 다른 사건이 둘 이상이면 어느 날인지 알 수 없다 → 날짜 조건 없이 일반 검색으로 넘긴다
     event, anchorable = events[0] if len({e for e, _ in events}) == 1 else (None, False)
     if direction:
+        if not explicit and mentioned and (len({e for e, _ in mentioned}) > 1 or NEGATION_RE.search(message)):
+            return None   # 사건을 말했지만 충돌·부정으로 기준이 없다: 직전 일기를 기준으로 삼으면 엉뚱한 날이 된다
         anchor = explicit or (event if anchorable else None) or (last_source_ids[0] if last_source_ids else None)
         if anchor is None:
             return None

@@ -150,3 +150,36 @@ def test_explicit_date_still_wins_over_negated_or_conflicting_events():
 def test_ambiguous_word_without_the_general_does_not_pull_in_the_release_day():
     # 압송이 본인 맥락이 아니면 사건으로 치지 않으므로 노량 하나만 남는다(출옥일 아님)
     assert r("노량 전투 뒤 포로 압송에 관한 기록이 있소?") == ["1598-11-17"]
+
+
+# ---- 재리뷰 반영: 입옥 표현이 강한 키워드와 겹침 / 제3자 존칭 / 충돌·부정 + 상대 표현 ----
+def test_entering_prison_phrase_wins_over_strong_word_for_anchoring():
+    assert r("감옥에 갇히신 다음 날은요?") is None
+    assert r("감옥에 갇히신 다음 날은요?", ["1592-06-10"]) == ["1592-08-24"]
+    assert r("감옥에 갇혔을 때는요?") == ["1597-04-01"]      # 상대 표현이 없으면 같은 날로는 간다
+
+
+@pytest.mark.parametrize("msg", ["원균께서 파직되셨을 때는요?", "권율 장군께서 파직당하셨을 때는요?", "임금께서 압송을 명하셨나요?",
+                                 "포로가 압송되셨을 때는요?"])
+def test_ambiguous_words_with_a_named_third_party_do_not_map(msg):
+    assert r(msg) is None
+
+
+def test_generals_own_ambiguous_phrases_still_map():
+    assert r("장군께서 파직당하셨을 때는요?") == ["1597-04-01"]
+    assert r("압송되셨을 때 이야기해 주세요") == ["1597-04-01"]
+
+
+@pytest.mark.parametrize("msg", ["명량과 노량 전날은요?", "유배 말고 노량 전날은요?", "유배 말고 전날은요?",
+                                 "유배는 아니고 명량 다음날은요?"])
+def test_conflict_or_negation_with_relative_day_goes_to_general_search_not_previous_diary(msg):
+    assert r(msg, ["1592-06-10"]) is None
+
+
+def test_followup_without_any_event_still_uses_previous_diary():
+    assert r("그다음 날은요?", ["1592-06-10"]) == ["1592-08-24"]
+    assert r("그 전날은요?", ["1597-09-16"]) == ["1597-09-15"]
+
+
+def test_explicit_date_still_beats_conflict_and_negation_with_relative_day():
+    assert r("유배 말고 정유년 9월 16일 전날은요?", ["1592-06-10"]) == ["1597-09-15"]
