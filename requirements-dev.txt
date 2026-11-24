@@ -5,3 +5,4 @@ beautifulsoup4
 requests
 korean-lunar-calendar
 pg8000
+cfn-lint

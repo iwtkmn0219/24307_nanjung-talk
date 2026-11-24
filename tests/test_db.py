@@ -95,3 +95,14 @@ def test_init_schema_runs_each_statement():
 def test_packaged_schema_matches_sql_dir():
     from pathlib import Path
     assert db.SCHEMA_PATH.read_text(encoding="utf-8") == Path("sql/schema.sql").read_text(encoding="utf-8")
+
+
+def test_ssl_context_uses_ca_bundle_when_configured(monkeypatch, tmp_path):
+    import ssl
+    calls = []
+    monkeypatch.setattr(ssl, "create_default_context", lambda **kw: calls.append(kw) or "ctx")
+    monkeypatch.setenv("DB_SSL_CA", str(tmp_path / "bundle.pem"))
+    assert db.ssl_context() == "ctx" and calls == [{"cafile": str(tmp_path / "bundle.pem")}]
+    monkeypatch.delenv("DB_SSL_CA")
+    db.ssl_context()
+    assert calls[-1] == {}

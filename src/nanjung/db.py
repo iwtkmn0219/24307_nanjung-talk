@@ -15,12 +15,18 @@ _COLS = ", ".join(COLUMNS)
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
 
 
+def ssl_context() -> ssl.SSLContext:
+    """RDS 인증서는 Amazon 사설 CA라서 DB_SSL_CA(RDS global bundle 경로)를 주면 그것으로 검증한다."""
+    ca = os.environ.get("DB_SSL_CA")
+    return ssl.create_default_context(cafile=ca) if ca else ssl.create_default_context()
+
+
 def connect():
     import pg8000.native
     return pg8000.native.Connection(
         host=os.environ["DB_HOST"], database=os.environ["DB_NAME"],
         user=os.environ["DB_USER"], password=os.environ["DB_PASSWORD"],
-        port=int(os.environ.get("DB_PORT", "5432")), ssl_context=ssl.create_default_context(),
+        port=int(os.environ.get("DB_PORT", "5432")), ssl_context=ssl_context(),
         timeout=10)
 
 

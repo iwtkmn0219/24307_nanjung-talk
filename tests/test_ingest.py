@@ -1,0 +1,163 @@
+import json
+from datetime import date
+
+import pytest
+
+from nanjung.handlers import ingest
+from nanjung.models import DiaryEntry
+
+HTML = ('<div class="text_body ori">'
+        '<div class="xsl_para">十三日壬寅。晴。出東軒公事。</div>'
+        '<div class="xsl_para">十四日癸卯。雨。</div></div>')
+INDEX = [{"data_id": "X", "title": "壬辰四月"}]
+
+
+class FakeS3:
+    def __init__(self, objects):
+        self.objects = dict(objects)
+        self.puts = []
+
+    def get_object(self, Bucket, Key):
+        if Key not in self.objects:
+            from botocore.exceptions import ClientError
+            raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
+        import io
+        return {"Body": io.BytesIO(self.objects[Key].encode("utf-8"))}
+
+    def put_object(self, Bucket, Key, Body, **kw):
+        self.puts.append(Key)
+        self.objects[Key] = Body.decode("utf-8") if isinstance(Body, bytes) else Body
+
+
+class FakeBedrock:
+    def __init__(self):
+        self.converse_calls = 0
+        self.embed_calls = 0
+        self.embedded = []
+
+    def enrich(self, e, client=None):
+        self.converse_calls += 1
+        from dataclasses import replace
+        return replace(e, translation=f"번역{e.lunar_day}", emotion="일상", intro="소개하오.",
+                       questions=["q1", "q2", "q3"])
+
+    def embed(self, text, client=None):
+        self.embed_calls += 1
+        self.embedded.append(text)
+        return [0.0] * 1024
+
+
+class FakeDB:
+    def __init__(self, dates=()):
+        self.upserts, self.schema_inited, self.dates = [], False, list(dates)
+
+    def init_schema(self, conn): self.schema_inited = True
+    def upsert(self, conn, e, emb): self.upserts.append((e, emb))
+    def all_dates(self, conn): return self.dates
+
+
+class FakeTable:
+    def __init__(self): self.items = []
+
+    def batch_writer(self):
+        table = self
+
+        class W:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def put_item(self, Item): table.items.append(Item)
+        return W()
+
+
+def processed(lunar_days):
+    return json.dumps([{"id": f"1592-04-{d}", "translation": f"캐시{d}", "emotion": "비통",
+                        "intro": "캐시 소개하오.", "questions": ["a", "b", "c"]} for d in lunar_days],
+                      ensure_ascii=False)
+
+
+@pytest.fixture
+def fakes(monkeypatch):
+    def install(objects, dates=()):
+        s3, br, fdb, table = FakeS3(objects), FakeBedrock(), FakeDB(dates), FakeTable()
+        monkeypatch.setenv("DATA_BUCKET", "b")
+        monkeypatch.setattr(ingest, "s3_client", lambda: s3)
+        monkeypatch.setattr(ingest, "get_conn", lambda: object())
+        monkeypatch.setattr(ingest, "today_table", lambda: table)
+        monkeypatch.setattr(ingest, "enrich", br.enrich)
+        monkeypatch.setattr(ingest, "embed", br.embed)
+        monkeypatch.setattr(ingest, "db", fdb)
+        return s3, br, fdb, table
+    return install
+
+
+BASE = {"raw/index.json": json.dumps(INDEX, ensure_ascii=False), "raw/X.html": HTML}
+
+
+def test_ingest_uses_processed_cache(fakes):
+    s3, br, fdb, _ = fakes({**BASE, "processed/X.json": processed([13, 14])})
+    out = ingest.lambda_handler({"action": "ingest", "key": "raw/X.html"}, None)
+    assert out == {"count": 2}
+    assert br.converse_calls == 0 and br.embed_calls == out["count"]
+    assert [e.translation for e, _ in fdb.upserts] == ["캐시13", "캐시14"]
+    assert br.embedded == ["캐시13", "캐시14"]  # 임베딩 대상은 번역문
+    assert s3.puts == []
+
+
+def test_ingest_enriches_and_saves_processed_when_missing(fakes):
+    s3, br, fdb, _ = fakes(dict(BASE))
+    out = ingest.lambda_handler({"action": "ingest", "key": "raw/X.html"}, None)
+    assert out == {"count": 2} and br.converse_calls == 2
+    assert s3.puts == ["processed/X.json"]
+    saved = json.loads(s3.objects["processed/X.json"])
+    assert [d["id"] for d in saved] == ["1592-04-13", "1592-04-14"]
+    assert saved[0]["translation"] == "번역13" and saved[0]["original"].startswith("十三日壬寅")
+    e = fdb.upserts[0][0]
+    assert e.solar_date == date(1592, 5, 23) and e.label == "임진년(1592) 4월 13일"
+
+
+def test_ingest_enriches_only_entries_missing_from_cache(fakes):
+    s3, br, fdb, _ = fakes({**BASE, "processed/X.json": processed([13])})
+    ingest.lambda_handler({"action": "ingest", "key": "raw/X.html"}, None)
+    assert br.converse_calls == 1 and s3.puts == ["processed/X.json"]
+    assert [e.translation for e, _ in fdb.upserts] == ["캐시13", "번역14"]
+
+
+def test_init_schema(fakes):
+    _, _, fdb, _ = fakes({})
+    assert ingest.lambda_handler({"action": "init_schema"}, None) == {"ok": True}
+    assert fdb.schema_inited
+
+
+def test_build_today_map_writes_366_items(fakes):
+    _, _, _, table = fakes({}, dates=[("1592-04-13", date(1592, 5, 23))])
+    out = ingest.lambda_handler({"action": "build_today_map"}, None)
+    assert out == {"count": 366} and len(table.items) == 366
+    item = next(i for i in table.items if i["md"] == "05-23")
+    assert item == {"md": "05-23", "ids": ["1592-04-13"], "exact": True}
+
+
+def test_ingest_rejects_key_outside_raw(fakes):
+    fakes(dict(BASE))
+    with pytest.raises(ValueError):
+        ingest.lambda_handler({"action": "ingest", "key": "processed/X.json"}, None)
+
+
+def test_unknown_action_raises(fakes):
+    fakes({})
+    with pytest.raises(ValueError):
+        ingest.lambda_handler({"action": "drop_everything"}, None)
+
+
+def test_enrich_failure_saves_finished_entries_then_raises(fakes, monkeypatch):
+    s3, br, fdb, _ = fakes(dict(BASE))
+    from nanjung.enrich import EnrichError
+
+    def flaky(e, client=None):
+        if e.lunar_day == 14:
+            raise EnrichError("broken")
+        return br.enrich(e)
+    monkeypatch.setattr(ingest, "enrich", flaky)
+    with pytest.raises(EnrichError):
+        ingest.lambda_handler({"action": "ingest", "key": "raw/X.html"}, None)
+    saved = json.loads(s3.objects["processed/X.json"])
+    assert [d["id"] for d in saved] == ["1592-04-13"] and fdb.upserts == []

@@ -1,0 +1,79 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: 난중톡(亂中Talk) MVP
+
+Parameters:
+  DbHost:
+    Type: String
+  DbName:
+    Type: String
+    Default: nanjung
+  DbUser:
+    Type: String
+    Default: nanjung_app
+  DbPassword:
+    Type: String
+    NoEcho: true
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+  LambdaSgId:
+    Type: AWS::EC2::SecurityGroup::Id
+  DataBucket:
+    Type: String
+
+Globals:
+  Function:
+    Runtime: python3.12
+    CodeUri: src/
+    Architectures: [x86_64]
+    VpcConfig:
+      SubnetIds: !Ref SubnetIds
+      SecurityGroupIds: [!Ref LambdaSgId]
+    Environment:
+      Variables:
+        DB_HOST: !Ref DbHost
+        DB_NAME: !Ref DbName
+        DB_USER: !Ref DbUser
+        DB_PASSWORD: !Ref DbPassword
+        DB_SSL_CA: /var/task/nanjung/rds-global-bundle.pem
+
+Resources:
+  TodayMapTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: md
+          AttributeType: S
+      KeySchema:
+        - AttributeName: md
+          KeyType: HASH
+
+  IngestFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: nanjung.handlers.ingest.lambda_handler
+      MemorySize: 512
+      Timeout: 900
+      ReservedConcurrentExecutions: 2
+      Environment:
+        Variables:
+          DATA_BUCKET: !Ref DataBucket
+          TODAY_TABLE: !Ref TodayMapTable
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource:
+                - arn:aws:bedrock:*::foundation-model/*
+                - !Sub arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*
+        - S3CrudPolicy:
+            BucketName: !Ref DataBucket
+        - DynamoDBWritePolicy:
+            TableName: !Ref TodayMapTable
+
+Outputs:
+  IngestFunctionName:
+    Value: !Ref IngestFunction
+  TodayMapTableName:
+    Value: !Ref TodayMapTable
