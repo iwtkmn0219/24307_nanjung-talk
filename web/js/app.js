@@ -1,6 +1,6 @@
 // 진입점: 상태 + api + view 연결
 import { postChat, getDiary } from "./api.js";
-import { canSend, getClientId, initialState, kstToday, reduce, shouldSubmit } from "./logic.js";
+import { canSend, getClientId, initialState, kstToday, reduce, requestSourceIds, shouldSubmit } from "./logic.js";
 import * as V from "./view.js";
 
 const app = document.getElementById("app");
@@ -71,8 +71,8 @@ async function loadDiary() {
   }
   const body = r.body;
   const intro = `${body.entry.intro} 무엇이든 물어보시오.`;
-  diarySlot.replaceChildren(V.diaryCard(body, today), V.generalBubble(intro, {}, V.chips(body.questions, pick)));
-  dispatch({ type: "diary", emotion: body.entry.emotion });
+  diarySlot.replaceChildren(V.diaryCard(body, today), V.generalBubble(intro, {}, V.chips(body.questions, q => send(q, { anchorIds: [body.entry.id] }))));
+  dispatch({ type: "diary", emotion: body.entry.emotion, id: body.entry.id });
   render();
 }
 
@@ -81,7 +81,8 @@ function pick(question) {
   send(question);
 }
 
-async function send(text, { retryOf = null } = {}) {
+// anchorIds: 오늘 일기 카드에서 누른 질문은 그 일기를 기준으로 보낸다(다른 답변 뒤에 눌러도, 다시 여쭙기에서도 유지)
+async function send(text, { retryOf = null, anchorIds = null } = {}) {
   const message = text.trim();
   if (!canSend(state, message)) return;
   dispatch({ type: "send", message });
@@ -95,7 +96,7 @@ async function send(text, { retryOf = null } = {}) {
   scrollToEnd();
 
   const r = await postChat({
-    base, clientId, message, history: state.history, lastSourceIds: state.lastSourceIds,
+    base, clientId, message, history: state.history, lastSourceIds: requestSourceIds(state, anchorIds),
   });
 
   if (r.kind === "ok") {
@@ -119,7 +120,7 @@ async function send(text, { retryOf = null } = {}) {
     dispatch({ type: "unavailable" });
     // 이 안내 박스의 [다시 여쭙기]는 이 박스를 만든 질문(message)을 다시 보낸다
     const box = V.notice("unavailable", r.kind === "unavailable" ? r.answer : null,
-      () => send(message, { retryOf: box }));
+      () => send(message, { retryOf: box, anchorIds }));
     pending.replaceWith(box);
     render();
     input.focus();

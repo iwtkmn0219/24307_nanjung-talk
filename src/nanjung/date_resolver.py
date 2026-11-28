@@ -8,6 +8,10 @@ from .dates import entry_id
 
 NeighborFn = Callable[[str, int], "str | None"]
 
+# '그날·이날'(띄어쓰기 변형 포함)은 직전 근거 일기를 가리킨다(그날 말고·그날 이후·그날까지처럼 제외·범위를 묻는 말은 그날 하나가 아니다). '이 날씨'·'그 날짜' 같은 낱말은 제외하고, '그때'·'당시'는 쓰지 않는다.
+EVERY_DAY_RE = re.compile(r"그\s*날\s*그\s*날")   # 그날그날(날마다)은 특정한 날이 아니다
+THAT_DAY_RE = re.compile(r"(?<![가-힣])(?:그|이)\s*날(?!씨|짜|개|다|아|카|렵|그)(?!\s*그\s*날)"
+                         r"(?!을?\s*(?:제외|빼고|말고))(?!\s*(?:이후|이전|이외|뒤|전에|전엔|후에|후엔|까지|부터|외에|밖에|말고|빼고|제외))")
 NEXT_RE = re.compile(r"다음\s*날|다음날|이튿날")
 PREV_RE = re.compile(r"전날|그\s*전날|前날")
 GANJI_YEARS = {"임진": 1592, "계사": 1593, "갑오": 1594, "을미": 1595, "병신": 1596, "정유": 1597, "무술": 1598}
@@ -140,4 +144,10 @@ def resolve(message: str, last_source_ids: list[str], neighbor_fn: NeighborFn) -
         nid = neighbor_fn(anchor, direction)
         return [nid] if nid else None
     target = explicit or event
-    return [target] if target else None
+    if target:
+        return [target]
+    # 명시 날짜·사건·오늘·상대일이 모두 없을 때만 '그날·이날'을 직전 근거로 푼다(사건을 말했으나 충돌·부정이면 풀지 않는다)
+    if (not mentioned and last_source_ids and THAT_DAY_RE.search(message) and not NEGATION_RE.search(message)
+            and not EVERY_DAY_RE.search(message)):
+        return [last_source_ids[0]]
+    return None

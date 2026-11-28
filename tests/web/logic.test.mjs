@@ -107,3 +107,38 @@ test("오늘의 일기 감정은 첫 답변 전에만 톤에 반영", () => {
   const pending = L.reduce(L.initialState(), { type: "send", message: "q" });
   assert.equal(L.reduce(pending, { type: "diary", emotion: "비통" }).tone, "grief");
 });
+
+test("오늘의 일기는 첫 맥락(lastSourceIds)이 된다", () => {
+  const s = L.reduce(L.initialState(), { type: "diary", emotion: "일상", id: "1596-10-09" });
+  assert.deepEqual(s.lastSourceIds, ["1596-10-09"]);
+  assert.equal(s.history.length, 0);
+});
+
+test("첫 답 이후 도착한 오늘의 일기는 lastSourceIds를 바꾸지 않는다", () => {
+  let s = L.reduce(L.initialState(), { type: "send", message: "q" });
+  s = L.reduce(s, { type: "answer", message: "q", body: { answer: "a", mode: "normal", sources: [{ id: "1597-09-16" }] } });
+  const after = L.reduce(s, { type: "diary", emotion: "비통", id: "1596-10-09" });
+  assert.equal(after, s);
+  assert.deepEqual(after.lastSourceIds, ["1597-09-16"]);
+});
+
+test("오늘의 일기 id가 없으면 lastSourceIds는 비어 있다", () => {
+  const s = L.reduce(L.initialState(), { type: "diary", emotion: "일상" });
+  assert.deepEqual(s.lastSourceIds, []);
+});
+
+test("첫 답이 오기 전(pending)에 도착한 오늘의 일기도 맥락으로 반영된다", () => {
+  const pending = L.reduce(L.initialState(), { type: "send", message: "q" });
+  assert.deepEqual(L.reduce(pending, { type: "diary", emotion: "일상", id: "1596-10-09" }).lastSourceIds, ["1596-10-09"]);
+});
+
+test("requestSourceIds: 오늘 일기 카드에서 누른 질문은 그 일기를 기준으로, 입력창 질문은 직전 근거를 쓴다", () => {
+  let s = L.reduce(L.initialState(), { type: "diary", emotion: "일상", id: "T" });
+  s = L.reduce(L.reduce(s, { type: "send", message: "q" }), { type: "answer", message: "q", body: { answer: "a", mode: "normal", sources: [{ id: "A" }] } });
+  assert.deepEqual(s.lastSourceIds, ["A"]);
+  assert.deepEqual(L.requestSourceIds(s, ["T"]), ["T"]);       // 오늘 일기 추천 질문
+  assert.deepEqual(L.requestSourceIds(s), ["A"]);              // 입력창
+  assert.deepEqual(L.requestSourceIds(s, null), ["A"]);
+  const empty = L.reduce(L.reduce(L.initialState(), { type: "send", message: "q" }), { type: "answer", message: "q", body: { answer: "a", mode: "out_of_scope", sources: [] } });
+  assert.deepEqual(L.requestSourceIds(empty, ["T"]), ["T"]);   // 첫 답이 일기 밖이어도 추천 질문 기준은 유지
+});

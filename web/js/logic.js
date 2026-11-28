@@ -72,6 +72,11 @@ export function initialState() {
   return { status: "idle", history: [], lastSourceIds: [], lastQuestion: null, tone: null };
 }
 
+/** 서버로 보낼 직전 근거. 오늘 일기 카드에서 누른 질문은 그 일기(anchorIds)를 기준으로, 입력창 질문은 직전 대화 근거를 쓴다 */
+export function requestSourceIds(state, anchorIds) {
+  return anchorIds?.length ? anchorIds : state.lastSourceIds;
+}
+
 export function canSend(state, text) {
   const len = text.trim().length;
   return state.status === "idle" && len >= 1 && len <= MAX_LEN;
@@ -99,9 +104,15 @@ export function reduce(state, action) {
     case "unavailable":
       if (state.status === "locked") return state;
       return { ...state, status: "idle" };
-    case "diary": // 늦게 도착한 오늘의 일기가 이미 받은 답의 톤을 덮지 않게, 첫 답 전에만 반영
+    case "diary": // 늦게 도착한 오늘의 일기가 이미 받은 답의 톤·맥락을 덮지 않게, 첫 답 전에만 반영
       if (state.history.length > 0) return state;
-      return { ...state, tone: action.emotion === "비통" ? "grief" : null };
+      // 오늘의 일기를 첫 맥락으로: 서버가 '그날·이날' 같은 말을 이 일기로 풀 수 있게 한다(소개 말은 history에 넣지 않는다:
+      // 서버는 assistant로 시작하는 기록을 버린다)
+      return {
+        ...state,
+        tone: action.emotion === "비통" ? "grief" : null,
+        lastSourceIds: action.id ? [action.id] : state.lastSourceIds,
+      };
     default:
       return state;
   }
