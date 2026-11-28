@@ -131,3 +131,14 @@ test("첫 답이 오기 전(pending)에 도착한 오늘의 일기도 맥락으�
   const pending = L.reduce(L.initialState(), { type: "send", message: "q" });
   assert.deepEqual(L.reduce(pending, { type: "diary", emotion: "일상", id: "1596-10-09" }).lastSourceIds, ["1596-10-09"]);
 });
+
+test("requestSourceIds: 오늘 일기 카드에서 누른 질문은 그 일기를 기준으로, 입력창 질문은 직전 근거를 쓴다", () => {
+  let s = L.reduce(L.initialState(), { type: "diary", emotion: "일상", id: "T" });
+  s = L.reduce(L.reduce(s, { type: "send", message: "q" }), { type: "answer", message: "q", body: { answer: "a", mode: "normal", sources: [{ id: "A" }] } });
+  assert.deepEqual(s.lastSourceIds, ["A"]);
+  assert.deepEqual(L.requestSourceIds(s, ["T"]), ["T"]);       // 오늘 일기 추천 질문
+  assert.deepEqual(L.requestSourceIds(s), ["A"]);              // 입력창
+  assert.deepEqual(L.requestSourceIds(s, null), ["A"]);
+  const empty = L.reduce(L.reduce(L.initialState(), { type: "send", message: "q" }), { type: "answer", message: "q", body: { answer: "a", mode: "out_of_scope", sources: [] } });
+  assert.deepEqual(L.requestSourceIds(empty, ["T"]), ["T"]);   // 첫 답이 일기 밖이어도 추천 질문 기준은 유지
+});

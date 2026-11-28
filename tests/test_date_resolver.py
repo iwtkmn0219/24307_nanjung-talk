@@ -336,3 +336,11 @@ def test_unresolved_event_mention_does_not_fall_back_to_that_day():
 @pytest.mark.parametrize("msg", ["이 날씨에 출정하셨나요?", "그 날짜가 언제였나요?", "그날그날 뭘 하셨나요 이날씨"])
 def test_words_that_only_contain_that_day_letters_are_not_that_day(msg):
     assert r(msg, ["1596-10-09"]) is None
+
+
+# ---- 리뷰 반영: '그날'을 제외하거나 그 앞뒤를 묻는 말은 그날 하나로 고정하지 않는다 ----
+@pytest.mark.parametrize("msg", ["그날 말고 다른 기록은요?", "그날 이후에는 어떻게 지내셨소?", "그날 이전에는 어땠나요?", "그날 전에는 무엇을 하셨소?",
+                                 "그날 뒤에는 어떠셨나요?", "그날을 빼고 알려 주세요", "이날 외에 어머님을 뵌 날은요?", "그날까지 어떻게 지내셨소?",
+                                 "그날그날 뭘 하셨나요?", "그날 그날 뭘 하셨나요?"])
+def test_that_day_with_negation_or_range_is_not_pinned(msg):
+    assert r(msg, ["1596-10-09"]) is None

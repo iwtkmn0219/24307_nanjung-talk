@@ -72,6 +72,11 @@ export function initialState() {
   return { status: "idle", history: [], lastSourceIds: [], lastQuestion: null, tone: null };
 }
 
+/** 서버로 보낼 직전 근거. 오늘 일기 카드에서 누른 질문은 그 일기(anchorIds)를 기준으로, 입력창 질문은 직전 대화 근거를 쓴다 */
+export function requestSourceIds(state, anchorIds) {
+  return anchorIds?.length ? anchorIds : state.lastSourceIds;
+}
+
 export function canSend(state, text) {
   const len = text.trim().length;
   return state.status === "idle" && len >= 1 && len <= MAX_LEN;
