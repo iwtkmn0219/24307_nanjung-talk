@@ -660,3 +660,15 @@ def test_loosely_related_time_words_do_not_force_todays_diary(env, monkeypatch, 
     _no_today_lookup(monkeypatch)
     call(ev(body(msg, last_source_ids=["1592-06-10"] if "전날" in msg else [])))
     assert "x-a" not in [i for c in fdb.search_calls for i in (c[1] or [])]
+
+
+def test_that_day_question_searches_the_previous_source_and_marks_it_as_the_day_asked(env):
+    fdb, rec = env(FakeDB({("x-9",): [Hit(entry("x-9"), 0.1)]}))
+    status, _ = call(ev(body("그날 어머님과 무슨 말씀을 나누셨나요?", last_source_ids=["x-9"])))
+    assert status == 200 and fdb.search_calls == [(5, ["x-9"])] and rec.focus == [["x-9"]]
+
+
+def test_that_day_question_without_previous_source_is_general_search(env):
+    fdb, rec = env(FakeDB({}))
+    call(ev(body("그날 어머님과 무슨 말씀을 나누셨나요?")))
+    assert fdb.search_calls == [(5, None)] and rec.focus == [None]

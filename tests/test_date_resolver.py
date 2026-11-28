@@ -297,3 +297,42 @@ def test_time_words_that_modify_something_else_are_not_detected(msg):
 def test_adjacent_past_today_and_day_activity_questions_are_detected(msg):
     from nanjung.date_resolver import is_today_question
     assert is_today_question(msg) is True
+
+
+# ---- 사용자 제보: '그날·이날'은 직전 근거 일기로(오늘의 일기를 첫 맥락으로 쓰는 추천 질문) ----
+@pytest.mark.parametrize("msg", ["그날 어머님과 무슨 말씀을 나누셨나요?", "이날 어머님과 무슨 말씀을 나누셨나요?",
+                                 "그 날 어머님과 무슨 말씀을 나누셨나요?", "이 날 어머님과 무슨 말씀을 나누셨나요?",
+                                 "장군께서 그날 어머님을 모시면서 특별히 나누신 말씀이나 일이 있으셨나요?"])
+def test_that_day_uses_the_previous_source(msg):
+    assert r(msg, ["1596-10-09"]) == ["1596-10-09"]
+
+
+def test_that_day_without_previous_source_is_general_search():
+    assert r("그날 어머님과 무슨 말씀을 나누셨나요?") is None
+
+
+@pytest.mark.parametrize("msg", ["그때 어머님과 무슨 말씀을 나누셨나요?", "당시 어머님과 무슨 말씀을 나누셨나요?"])
+def test_that_time_and_back_then_are_not_that_day(msg):
+    assert r(msg, ["1596-10-09"]) is None
+
+
+def test_event_beats_that_day():
+    assert r("명량 그날 어떠셨소?", ["1596-10-09"]) == ["1597-09-16"]
+
+
+def test_explicit_date_beats_that_day():
+    assert r("정유년 9월 16일 그날은요?", ["1596-10-09"]) == ["1597-09-16"]
+
+
+def test_relative_day_beats_that_day():
+    assert r("그날 다음 날은요?", ["1592-06-10"]) == ["1592-08-24"]
+    assert r("이날 전날은요?", ["1597-09-16"]) == ["1597-09-15"]
+
+
+def test_unresolved_event_mention_does_not_fall_back_to_that_day():
+    assert r("명량 말고 그날은요?", ["1596-10-09"]) is None      # 사건을 말했으나 부정 → 직전 근거로 넘기지 않는다
+
+
+@pytest.mark.parametrize("msg", ["이 날씨에 출정하셨나요?", "그 날짜가 언제였나요?", "그날그날 뭘 하셨나요 이날씨"])
+def test_words_that_only_contain_that_day_letters_are_not_that_day(msg):
+    assert r(msg, ["1596-10-09"]) is None

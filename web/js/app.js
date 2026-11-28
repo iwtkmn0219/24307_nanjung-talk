@@ -72,7 +72,7 @@ async function loadDiary() {
   const body = r.body;
   const intro = `${body.entry.intro} 무엇이든 물어보시오.`;
   diarySlot.replaceChildren(V.diaryCard(body, today), V.generalBubble(intro, {}, V.chips(body.questions, pick)));
-  dispatch({ type: "diary", emotion: body.entry.emotion });
+  dispatch({ type: "diary", emotion: body.entry.emotion, id: body.entry.id });
   render();
 }
 
